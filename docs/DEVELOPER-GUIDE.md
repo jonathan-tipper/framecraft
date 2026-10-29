@@ -80,3 +80,12 @@ Run the commands and native matrix in [TESTING.md](TESTING.md). Keep exact resul
 Full-text OCR uses bounded contrast normalisation only on its rendered working buffer; see the exact sampling policy in [architecture](ARCHITECTURE.md#ocr-boundaries). Test both the dark-interface and light crop/redaction fixtures after changing this path.
 
 Native OCR may fail inside a restricted execution sandbox because CoreVideo cannot allocate a pixel buffer. An explicitly authorised unsandboxed synthetic test distinguishes that environment limitation from OCR behaviour; it does not justify capturing a user's desktop or widening normal app permissions. Run only the named native OCR tests, not all ignored tests blindly.
+
+
+## Mac UI and distribution (beta 2)
+
+The [Mac experience specification](specs/0.3-mac-experience.md) supersedes the session-first initial layout. `DesktopControls` owns native application/menu bar commands; macOS capture accelerators dispatch through that boundary, without duplicate egui capture key handling. `Framecraft::capture` rechecks busy and active-session state. Shortcut preferences have a separate dialog draft; only successful Save changes committed bindings. Session interaction is disabled behind settings/replacement dialogs.
+
+The app reads the installed SFNS font when available and falls back to its bundled UI fonts. It does not redistribute Apple's font. New captures/imports start without added styling; the CLI renderer's established default style remains unchanged.
+
+Run `scripts/bundle-macos.sh`, `scripts/test-install-macos.sh`, then `scripts/package-macos.sh --skip-build`. Packaging verifies the bundle/version and writes a versioned DMG. `scripts/install-macos.sh` installs into Applications; updates require `--replace` and a stopped app. See [installation](INSTALLATION.md). App icon sources are in `packaging/make-icon.swift`; regenerate deliberately, never during an unrelated build. Preserve the macOS 13 deployment target and run native controls smoke after changing application menus.

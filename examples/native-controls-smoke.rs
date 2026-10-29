@@ -21,10 +21,42 @@ fn main() -> eframe::Result {
                 let wake = ctx.clone();
                 let mut controls = DesktopControls::new(move || wake.request_repaint())
                     .expect("native controls created on main thread");
+                let native_menu = application.mainMenu().expect("application menu installed");
+                let captures = native_menu
+                    .itemWithTitle(&objc2_foundation::NSString::from_str("Capture"))
+                    .unwrap()
+                    .submenu()
+                    .unwrap();
+                for (title, expected) in [
+                    ("Capture Area…", DesktopAction::CaptureArea),
+                    ("Capture Window…", DesktopAction::CaptureWindow),
+                    ("Capture Screen", DesktopAction::CaptureScreen),
+                ] {
+                    let title = objc2_foundation::NSString::from_str(title);
+                    assert!(captures.itemWithTitle(&title).unwrap().isEnabled());
+                    captures.performActionForItemAtIndex(captures.indexOfItemWithTitle(&title));
+                    assert_eq!(controls.poll(), vec![expected]);
+                }
+                controls.set_capture_available(false);
+                let area_title = objc2_foundation::NSString::from_str("Capture Area…");
+                assert!(!captures.itemWithTitle(&area_title).unwrap().isEnabled());
+                captures.performActionForItemAtIndex(captures.indexOfItemWithTitle(&area_title));
+                assert!(controls.poll().is_empty(), "busy captures must not route");
+                controls.set_capture_available(true);
+                assert!(captures.itemWithTitle(&area_title).unwrap().isEnabled());
+                let app_menu = native_menu.itemAtIndex(0).unwrap().submenu().unwrap();
+                let settings_title = objc2_foundation::NSString::from_str("Keyboard Shortcuts…");
+                app_menu
+                    .performActionForItemAtIndex(app_menu.indexOfItemWithTitle(&settings_title));
+                assert_eq!(controls.poll(), vec![DesktopAction::Settings]);
+                let quit_title = objc2_foundation::NSString::from_str("Quit Framecraft");
+                app_menu.performActionForItemAtIndex(app_menu.indexOfItemWithTitle(&quit_title));
+                assert_eq!(controls.poll(), vec![DesktopAction::Quit]);
+                println!("PASS actual native Capture Area/Window/Screen, busy gating, Settings and Quit actions; no image captured");
                 let keys = ShortcutSettings {
-                    capture: "Super+Alt+Shift+F16".into(),
-                    pause_resume: "Super+Alt+Shift+F17".into(),
-                    stop: "Super+Alt+Shift+F18".into(),
+                    capture: "Command + Option + Shift + F16".into(),
+                    pause_resume: "Command + Option + Shift + F17".into(),
+                    stop: "Command + Option + Shift + F18".into(),
                 };
                 controls
                     .configure_shortcuts(&keys, true)

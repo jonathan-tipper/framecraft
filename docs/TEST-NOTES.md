@@ -1,4 +1,27 @@
-# Verification notes: 0.3.0-beta.1
+# Verification notes: 0.3.0-beta.2
+
+Checked 29 October 2026 on the same macOS 26.6.2 arm64 machine as beta 1 below. Issue [#20](https://github.com/jonathan-tipper/framecraft/issues/20) records the usability correction.
+
+| Check | Result |
+| --- | --- |
+| Locked all-target tests | 138 passed: 112 library + 26 application/UI; 3 existing explicit native/long tests ignored |
+| Locked tests without UI | 108 passed; 3 existing explicit checks ignored |
+| Formatting, strict Clippy, diff whitespace | Passed |
+| Native controls smoke | Passed actual Area/Window/Screen menu routing, disabled busy capture, settings/quit, shortcut registration and native termination protection |
+| Installer regression script | Passed staged install, explicit replacement, wrong-app/symlink/running refusal, unrelated-file retention and failed-publication rollback. Process enumeration and publication failure were simulated; signatures/filesystem operations were real |
+| Local installation | Installed at `/Applications/Framecraft.app`, build 3.0.2; strict ad-hoc signature verification passed |
+| Initial screen and settings | Installed app launched to Screenshot with visible Area/Window/Screen commands. Mac system font and light surfaces inspected. Shortcut dialog showed Command/Option checkboxes, key choices and scope explanations; Save/Close were visible |
+| Application menu | Native Capture menu displayed Area/Window/Screen, with inactive collection actions disabled |
+| Shortcut draft and background controls | In the installed final build, Sessions controls disabled behind settings; clearing the last modifier retained a usable binding; Close/reopen discarded an unsaved change and restored the saved binding |
+| Final DMG | Created, checksum-verified, mounted read-only and signature-checked; Applications link and beta version present; bundled binary matched the installed application |
+
+The native area command launched `/usr/sbin/screencapture -i -s` and hid Framecraft as intended. The automation could not deliver Escape or selection input to the system selector while the app was hidden. Two test-only selectors were explicitly terminated without saving an image; the app returned with an explained error. A synthetic Preview image was used for the second attempt. **Actual rectangle completion and ordinary Escape cancellation remain unverified**. This tool limitation is not a successful capture result. No permission was granted or changed by automation.
+
+New regression tests cover initial single-capture state, dialog/busy capture gating, unsaved-edit prompts retaining the intended action, unmodified image dimensions and shortcut drafts staying separate from committed session bindings. Existing hidden-editor, redaction/output, session persistence and worker checks still pass.
+
+The broader permission, multi-display, external receiver, VoiceOver, Intel and older-macOS matrix below remains outstanding. The session-first initial form and raw shortcut entry are retired. Beta 1 evidence below is historical, not a claim that every native check was repeated for beta 2.
+
+## Historical beta 1 verification
 
 Checked on 28–29 October 2026 on macOS 26.6.2 (25G83), Apple silicon (M1 Max, 64 GB), Rust 1.95.0. The release binary is arm64, ad-hoc signed, with `LC_BUILD_VERSION minos 13.0` and SDK 26.5. These results support a local beta test, not a general compatibility or notarisation claim.
 

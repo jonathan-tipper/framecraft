@@ -3,6 +3,10 @@ use crate::settings::ShortcutSettings;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DesktopAction {
+    CaptureArea,
+    CaptureWindow,
+    CaptureScreen,
+    Settings,
     Capture,
     PauseResume,
     Stop,
@@ -35,12 +39,37 @@ mod native {
         runtime::{AnyClass, AnyObject, Bool, Imp, Sel},
         sel, MainThreadMarker,
     };
-    use objc2_app_kit::{NSApplication, NSApplicationTerminateReply};
+    use objc2_app_kit::{NSAccessibility, NSApplication, NSApplicationTerminateReply};
+    use objc2_foundation::NSString;
     use std::sync::{mpsc, Arc, Mutex};
     use tray_icon::{
-        menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem},
-        TrayIcon, TrayIconBuilder,
+        menu::{
+            accelerator::{Accelerator, Code, Modifiers},
+            Menu, MenuEvent, MenuItem, PredefinedMenuItem, Submenu,
+        },
+        Icon, TrayIcon, TrayIconBuilder,
     };
+
+    fn capture_icon() -> Result<Icon, String> {
+        // A monochrome framing reticle. AppKit treats it as a template and
+        // supplies the correct light/dark/high-contrast menu-bar appearance.
+        let size = 36_usize;
+        let mut rgba = vec![0; size * size * 4];
+        for y in 0..size {
+            for x in 0..size {
+                let corner = ((5..9).contains(&x) || (27..31).contains(&x))
+                    && ((5..15).contains(&y) || (21..31).contains(&y))
+                    || ((5..9).contains(&y) || (27..31).contains(&y))
+                        && ((5..15).contains(&x) || (21..31).contains(&x));
+                let centre = (16..20).contains(&x) && (13..23).contains(&y)
+                    || (16..20).contains(&y) && (13..23).contains(&x);
+                if corner || centre {
+                    rgba[(y * size + x) * 4 + 3] = 255;
+                }
+            }
+        }
+        Icon::from_rgba(rgba, size as u32, size as u32).map_err(|e| e.to_string())
+    }
 
     struct QuitHandler {
         sender: mpsc::SyncSender<()>,
@@ -141,6 +170,12 @@ mod native {
 
     pub struct DesktopControls {
         tray: TrayIcon,
+        application_menu: Menu,
+        capture_area: MenuItem,
+        capture_window: MenuItem,
+        capture_screen: MenuItem,
+        settings: MenuItem,
+        quit: MenuItem,
         status: MenuItem,
         source: MenuItem,
         capture: MenuItem,
@@ -168,13 +203,46 @@ mod native {
             // window Close remains available through the app's save guard.
             let quits = install_quit_handler(main_thread, wake.clone())?;
             let menu = Menu::new();
+            let capture_keys = Modifiers::META | Modifiers::ALT;
+            let capture_area = MenuItem::new(
+                "Capture Area…",
+                true,
+                Some(Accelerator::new(capture_keys, Code::Digit4)),
+            );
+            let capture_window = MenuItem::new(
+                "Capture Window…",
+                true,
+                Some(Accelerator::new(capture_keys, Code::Digit5)),
+            );
+            let capture_screen = MenuItem::new(
+                "Capture Screen",
+                true,
+                Some(Accelerator::new(capture_keys, Code::Digit3)),
+            );
+            let settings = MenuItem::new(
+                "Keyboard Shortcuts…",
+                true,
+                Some(Accelerator::new(Modifiers::META, Code::Comma)),
+            );
+            let quit = MenuItem::new(
+                "Quit Framecraft",
+                true,
+                Some(Accelerator::new(Modifiers::META, Code::KeyQ)),
+            );
             let status = MenuItem::new(status_text(DesktopState::Stopped, 0), false, None);
             let source = MenuItem::new("Source: none selected", false, None);
-            let capture = MenuItem::new("Capture now", false, None);
-            let pause = MenuItem::new("Pause", false, None);
-            let stop = MenuItem::new("Stop", false, None);
-            let review = MenuItem::new("Open review", true, None);
+            let capture = MenuItem::new("Capture Session Frame", false, None);
+            let pause = MenuItem::new("Pause Session", false, None);
+            let stop = MenuItem::new("Stop Session", false, None);
+            let review = MenuItem::new("Open Framecraft", true, None);
             menu.append_items(&[
+                &capture_area,
+                &capture_window,
+                &capture_screen,
+                &PredefinedMenuItem::separator(),
+                &review,
+                &settings,
+                &PredefinedMenuItem::separator(),
                 &status,
                 &source,
                 &PredefinedMenuItem::separator(),
@@ -182,16 +250,69 @@ mod native {
                 &pause,
                 &stop,
                 &PredefinedMenuItem::separator(),
-                &review,
+                &quit,
             ])
             .map_err(|e| e.to_string())?;
             let tray = TrayIconBuilder::new()
-                .with_title("FC: Stopped")
+                .with_icon(capture_icon()?)
+                .with_icon_as_template(true)
                 .with_tooltip("Framecraft: Stopped")
                 .with_menu(Box::new(menu))
                 .build()
                 .map_err(|e| e.to_string())?;
+            if let Some(button) = tray
+                .ns_status_item()
+                .and_then(|item| item.button(main_thread))
+            {
+                button.setAccessibilityLabel(Some(&NSString::from_str("Framecraft")));
+                button.setAccessibilityHelp(Some(&NSString::from_str(
+                    "Take a screenshot or control a capture session.",
+                )));
+            }
             let manager = GlobalHotKeyManager::new().map_err(|e| e.to_string())?;
+            // Normal application menus make Framecraft visible by name when
+            // focused. Menu events use the same guarded application actions as
+            // the status item, including Quit; no native termination bypass.
+            let app = Submenu::with_items(
+                "Framecraft",
+                true,
+                &[
+                    &settings,
+                    &PredefinedMenuItem::separator(),
+                    &PredefinedMenuItem::hide(Some("Hide Framecraft")),
+                    &PredefinedMenuItem::hide_others(None),
+                    &PredefinedMenuItem::show_all(None),
+                    &PredefinedMenuItem::separator(),
+                    &quit,
+                ],
+            )
+            .map_err(|e| e.to_string())?;
+            let captures = Submenu::with_items(
+                "Capture",
+                true,
+                &[
+                    &capture_area,
+                    &capture_window,
+                    &capture_screen,
+                    &PredefinedMenuItem::separator(),
+                    &capture,
+                    &pause,
+                    &stop,
+                ],
+            )
+            .map_err(|e| e.to_string())?;
+            let windows = Submenu::with_items(
+                "Window",
+                true,
+                &[
+                    &review,
+                    &PredefinedMenuItem::minimize(None),
+                    &PredefinedMenuItem::zoom(None),
+                ],
+            )
+            .map_err(|e| e.to_string())?;
+            let application_menu =
+                Menu::with_items(&[&app, &captures, &windows]).map_err(|e| e.to_string())?;
             let menu_wake = wake.clone();
             let (menu_tx, menus) = mpsc::channel();
             MenuEvent::set_event_handler(Some(move |event| {
@@ -217,8 +338,16 @@ mod native {
                         "Could not hide capture controls in time. Retry the capture.".to_string()
                     })?
             })));
+            application_menu.init_for_nsapp();
+            windows.set_as_windows_menu_for_nsapp();
             Ok(Self {
                 tray,
+                application_menu,
+                capture_area,
+                capture_window,
+                capture_screen,
+                settings,
+                quit,
                 status,
                 source,
                 capture,
@@ -249,7 +378,19 @@ mod native {
                 let _ = ack.send(result);
             }
             for event in self.menus.try_iter() {
-                if event.id == *self.capture.id() {
+                if event.id == *self.capture_area.id() && self.capture_area.is_enabled() {
+                    actions.push(DesktopAction::CaptureArea);
+                } else if event.id == *self.capture_window.id() && self.capture_window.is_enabled()
+                {
+                    actions.push(DesktopAction::CaptureWindow);
+                } else if event.id == *self.capture_screen.id() && self.capture_screen.is_enabled()
+                {
+                    actions.push(DesktopAction::CaptureScreen);
+                } else if event.id == *self.settings.id() {
+                    actions.push(DesktopAction::Settings);
+                } else if event.id == *self.quit.id() {
+                    actions.push(DesktopAction::Quit);
+                } else if event.id == *self.capture.id() {
                     actions.push(DesktopAction::Capture);
                 } else if event.id == *self.pause.id() {
                     actions.push(DesktopAction::PauseResume);
@@ -282,18 +423,18 @@ mod native {
             let text = status_text(state, count);
             if text != self.last_status {
                 self.status.set_text(&text);
-                let phase = match state {
-                    DesktopState::Running => "Running",
-                    DesktopState::Paused => "Paused",
-                    DesktopState::Stopped => "Stopped",
-                    DesktopState::Error => "Error",
-                };
-                self.tray.set_title(Some(format!("FC: {phase} {count}")));
                 let _ = self.tray.set_tooltip(Some(&text));
+                if let Some(button) = MainThreadMarker::new()
+                    .and_then(|mtm| self.tray.ns_status_item().and_then(|item| item.button(mtm)))
+                {
+                    button.setAccessibilityHelp(Some(&NSString::from_str(&format!(
+                        "{text}. Open the menu to take a screenshot or control the session."
+                    ))));
+                }
                 self.pause.set_text(if state == DesktopState::Running {
-                    "Pause"
+                    "Pause Session"
                 } else {
-                    "Resume"
+                    "Resume Session"
                 });
                 self.capture.set_enabled(state == DesktopState::Running);
                 self.pause.set_enabled(state != DesktopState::Stopped);
@@ -310,6 +451,14 @@ mod native {
             }
         }
 
+        /// Disable one-off capture during another capture, a modal decision or
+        /// any state in which the application cannot safely replace its image.
+        pub fn set_capture_available(&mut self, available: bool) {
+            self.capture_area.set_enabled(available);
+            self.capture_window.set_enabled(available);
+            self.capture_screen.set_enabled(available);
+        }
+
         /// A failed replacement rolls back newly registered keys. Retained old
         /// registrations stay intact; removed keys are released after success.
         pub fn configure_shortcuts(
@@ -323,15 +472,28 @@ mod native {
             let names = settings.canonical_keys()?;
             let parsed = names
                 .iter()
-                .map(|name| name.parse::<HotKey>().map_err(|e| e.to_string()))
+                .map(|name| {
+                    name.parse::<HotKey>().map_err(|_| {
+                        "This shortcut is not supported. Choose another key combination."
+                            .to_string()
+                    })
+                })
                 .collect::<Result<Vec<_>, _>>()?;
             let new: [HotKey; 3] = parsed.try_into().map_err(|_| "Expected three shortcuts.")?;
             let previous = self.keys;
             replace_shortcuts(
                 previous.as_ref().map_or(&[], |keys| keys.as_slice()),
                 &new,
-                |key| self.manager.register(*key).map_err(|e| e.to_string()),
-                |key| self.manager.unregister(*key).map_err(|e| e.to_string()),
+                |key| {
+                    self.manager
+                        .register(*key)
+                        .map_err(|_| "macOS could not register this key combination".to_string())
+                },
+                |key| {
+                    self.manager
+                        .unregister(*key)
+                        .map_err(|_| "macOS could not release this key combination".to_string())
+                },
             )?;
             self.keys = Some(new);
             Ok(())
@@ -346,6 +508,7 @@ mod native {
     }
     impl Drop for DesktopControls {
         fn drop(&mut self) {
+            self.application_menu.remove_for_nsapp();
             if let Ok(mut handler) = QUIT_HANDLER.lock() {
                 *handler = None;
             }
@@ -459,6 +622,7 @@ impl DesktopControls {
         Vec::new()
     }
     pub fn update(&mut self, _: DesktopState, _: usize, _: &str) {}
+    pub fn set_capture_available(&mut self, _: bool) {}
     pub fn configure_shortcuts(&mut self, _: &ShortcutSettings, _: bool) -> Result<(), String> {
         Err("Global shortcuts require macOS.".into())
     }
