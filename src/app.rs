@@ -1219,7 +1219,7 @@ impl Framecraft {
                 ui.painter().rect_stroke(
                     egui::Rect::from_min_max(self.map(canvas, min), self.map(canvas, max)),
                     0.0,
-                    Stroke::new(2.0, ACCENT),
+                    Stroke::new(2.0_f32, ACCENT),
                     egui::StrokeKind::Outside,
                 );
             }
@@ -1233,7 +1233,7 @@ impl Framecraft {
             ui.painter().rect_stroke(
                 self.map_rect(canvas, crop),
                 0.0,
-                Stroke::new(2.0, Color32::WHITE),
+                Stroke::new(2.0_f32, Color32::WHITE),
                 egui::StrokeKind::Inside,
             );
         }
