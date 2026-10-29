@@ -1,6 +1,6 @@
 # Framecraft 0.3 user guide
 
-This guide describes the 0.3.0-beta.1 test build. Start with synthetic content. The native test matrix remains incomplete; [TEST-NOTES.md](TEST-NOTES.md) records actual results.
+This guide describes the 0.3.0-beta.1 test build. Start with synthetic content. The native test matrix remains incomplete; [test notes on GitHub](https://github.com/jonathan-tipper/framecraft/blob/v0.3.0-beta.1/docs/TEST-NOTES.md) record actual results. This link also works when reading the guide bundled with the app.
 
 ## Set up a capture session
 
