@@ -1,91 +1,80 @@
-# Framecraft 0.2
+# Framecraft 0.3.0-beta.1
 
-A Rust screenshot workbench for macOS, built around capture sessions. Select the useful part of a meeting or presentation once, collect frames without reopening a selector, then annotate the ones worth sharing.
+A local Rust screenshot workbench for macOS. Collect frames from a fixed display region, reopen the session, explain selected images, and share a reviewed PNG or an offline evidence pack.
 
-This is an early implementation. [Cap](https://cap.so/) is already open source and uses substantial Rust; Framecraft's distinction is its session workflow and all-Rust application UI. No Cap code is reused. There is no recording, hosted sharing, account system, or subscription.
+This is a **test build**, not a notarised release. macOS 13 is the deployment baseline; native capture, permission, shortcut, drag and accessibility checks across supported Macs are still outstanding. The bundle, session reopening, dark-image OCR and Cmd+Q edit protection were checked on macOS 26.6.2, Apple silicon, using synthetic images. See [test evidence](docs/TEST-NOTES.md) and the [test checklist](docs/TESTING.md).
 
-## Session workflow
+## Try the build
 
-1. In **Session**, choose a title, destination folder, and display number.
-2. Click **Select shared area**. Framecraft takes a display snapshot; use **Crop** to mark the content, then **Use this area**. **Use full display** is also available.
-3. Choose **On shortcut**, **On a timer**, or **When content changes**, then **Start session**. Framecraft minimises.
-4. Collect images while using your meeting or presentation app. Returning to Framecraft pauses capture so you can review thumbnails, rename files, or choose **Edit**.
-5. Add arrows, rectangles, highlights, freehand ink, opaque redactions, or a crop. **Save edited copy** writes another PNG in the session folder and keeps the original.
-
-See [the workflow examples](docs/WORKFLOW.md) for filenames and operating limits.
-
-| Capture mode | Behaviour |
-| --- | --- |
-| On shortcut | `Cmd+Option+S` saves the selected region while the session is running |
-| On a timer | Configurable 5–120 second interval; capture and processing time affect the actual cadence |
-| When content changes | Samples about once a second and saves a sufficiently changed, settled frame; threshold and 0.5–5 second settling period are adjustable |
-
-The default limits are 120 minutes of elapsed session time, including pauses, or 500 saved images, whichever comes first. Stop the session before changing its source area or settings.
-
-The area is a fixed rectangle in the selected display's screenshot pixels. It does not follow a window. A display-size change pauses capture; reordering equal-sized displays is not detected. Stop and select again after moving the content or changing your display setup.
-
-## Names and saved images
-
-Each image is saved immediately with a UTC timestamp, sequence number, and fallback title. Optional background Apple Vision OCR looks for a visible heading and renames the file afterwards. This is OCR plus heading-selection rules, not a local language model or a general image captioner. Framecraft makes no cloud calls or model downloads for naming.
-
-OCR failure, missing text, or a full naming queue leaves the saved PNG with its fallback name. Files are not dropped because naming is slow. You can rename frames yourself; your chosen name takes priority over pending OCR. Names are sanitised and collisions do not replace existing captures. Opening a frame for editing is synchronised with background filename changes.
-
-## Editor
-
-The **Editor** tab also supports one-off area, window, and primary-display capture; PNG/JPEG imports; undo/redo; PNG export; image copying; gradients; padding; rounded corners; and shadows. Export is a flattened image, not an editable project.
-
-| Shortcut | Action and scope |
-| --- | --- |
-| `Cmd+Option+S` | Capture selected region, global during a running session |
-| `Cmd+Option+P` | Pause/resume, global while a session is active |
-| `Cmd+Option+X` | Stop session, global while a session is active |
-| `Cmd+Option+4`, `5`, `3` | One-off area, window, primary-screen capture while the editor is focused |
-| `Cmd+O` | Open image |
-| `Cmd+S` | Save edited copy for a session frame; otherwise open PNG export |
-| `Cmd+Shift+C` | Copy composed image |
-| `Cmd+Z`, `Cmd+Shift+Z` | Undo, redo |
-
-Global shortcut registration can fail if a combination is unavailable. The app reports that failure and leaves the session paused. Successful Start and Resume minimise the window; returning to it pauses collection. Resume resets change detection, so the last stable frame can be saved again. Pause and Stop invalidate in-flight capture work, but an atomic file save already underway can finish. These native behaviours still need testing on a Mac.
-
-## Build and run
-
-Target: macOS 13 or newer, with a stable Rust toolchain and Apple's command-line developer tools.
+You need a Mac, a current stable Rust toolchain, and Apple's command-line developer tools. From the repository checkout containing the 0.3 changes:
 
 ```sh
-cargo run --release
+cargo run --locked --release
 
-# Build a local application bundle.
+# Or build and open a local application bundle:
 ./scripts/bundle-macos.sh
 open dist/Framecraft.app
 ```
 
-The script uses the lockfile, when present, and creates an ad-hoc signed bundle with identifier `dev.framecraft.app`. This is local development signing, not Developer ID signing or notarisation.
+The bundle uses identifier `dev.framecraft.app` and ad-hoc signing for local testing. It is not Developer ID signed or notarised. The [0.3.0-beta.1 prerelease](https://github.com/jonathan-tipper/framecraft/releases/tag/v0.3.0-beta.1) provides an Apple silicon bundle, checksum and synthetic evidence pack. Intel and clean-Mac distribution are not validated. To install your local build, quit any running copy and copy `dist/Framecraft.app` into your Applications folder.
 
-macOS may request Screen Recording permission for Framecraft, Terminal, or the IDE launching it. Grant access to the process identified by macOS and restart it if requested.
+macOS may request Screen Recording access for Framecraft, Terminal, or the IDE launching it. Grant access to the process macOS identifies and restart it if requested. Use synthetic content and a disposable destination for the first test.
+
+## Capture, review, explain, share
+
+1. In **Session**, open **New capture session**, choose a destination and display, then **Select shared area**. Drag a crop around the intended content and confirm **Use this area**; **Use full display** is also available.
+2. Choose **On shortcut**, **On a timer**, or **When content changes**. Start the session. The app minimises; returning to it pauses collection.
+3. Use the menu bar controls or `Cmd+Option+S` to capture. The default pause/resume shortcut is `Cmd+Option+P`; stop is `Cmd+Option+X`. Change bindings through **Shortcuts** while stopped.
+4. Review the saved frames. Rename, reopen a session later, choose **Original** or a **Saved edited** variant, and open **Edit** to annotate.
+5. Add arrows, rectangles, highlights, freehand ink, redactions, text labels or numbered steps. Select and revise marks; use undo/redo. **Save edited copy** preserves the original.
+6. Copy the intended image, prepare it for native file drag, or select frames and choose **Review share pack…**. Review order, variants and captions before exporting the offline folder.
+
+The capture region is fixed in the selected display's screenshot pixels. **It does not follow a window.** Stop and reselect after moving the content or changing displays. Size changes pause capture; swapping equal-sized displays is not detected.
+
+| Mode | Behaviour |
+| --- | --- |
+| On shortcut | Capture now from the confirmed region while running |
+| On a timer | 5–120-second interval, plus capture and processing time |
+| When content changes | About one sample per second; saves sufficiently changed, settled pixels |
+
+Default limits are 120 elapsed minutes, including pauses, or 500 images. Change detection does not understand slides: animation can prevent settling and small changes can be missed. Manual capture remains available in every mode. A [synthetic change-mode benchmark](docs/evidence/change-mode.md) saved 22 of 30 intended frames in each of 3 runs, missing small or low-contrast changes.
+
+## What 0.3 adds
+
+- Reopenable sessions with local versioned metadata, recent folders, original/edited variants and explicit import/recovery.
+- Menu bar status and controls, configurable shortcuts, remembered capture defaults requiring source reconfirmation, and clearer source/destination failures.
+- Selectable annotations, multiline text and numbered steps using the same pixel compositor as export.
+- **Copy text…** from current rendered pixels using local Apple Vision OCR, with a text preview and explicit copy.
+- Deliberate image handoff and selected offline HTML/PNG packs with neutral output filenames.
+
+See the [release notes](docs/RELEASE-NOTES-0.3.md) for limits and the [product backlog](https://github.com/jonathan-tipper/framecraft/issues/1) for scope and evidence. User benefit has not yet been established by the [planned pilot](https://github.com/jonathan-tipper/framecraft/issues/9).
+
+## Data and output boundaries
+
+Original PNGs remain in the chosen session folder. **Redacting an edited copy does not remove the unredacted original.** Share the selected edited output or reviewed pack, not the whole session folder. Exported PNGs contain flattened pixels, without original layers or copied source metadata.
+
+Session metadata remembers capture identity, names and saved variants. It does not save editable annotation layers or OCR transcripts. Quitting or replacing an edited document requires an explicit save/export, discard or cancel decision. Saving a PNG does not make its annotations editable on reopening.
+
+Capture, editing and OCR make no application cloud calls. The capture adapter briefly writes a full-display image to a private temporary directory before cropping it. Prepared drag PNGs remain in temporary storage until the app exits. Cleanup is best effort, not secure erasure. Clipboard managers, cloud-synchronised destinations and receiving apps have their own retention behaviour.
+
+Images use RGBA8. Colour-managed wide-gamut/HDR output is not implemented; imported colour profiles are discarded without a colour transform. Text labels use bundled Hack glyphs; unsupported characters show `?`, without complex-script shaping. OCR quality and supported languages depend on installed Apple Vision.
+
+## Documentation and development
+
+- [User guide](docs/USER-GUIDE.md): controls, recovery, sharing and troubleshooting.
+- [Worked example](docs/WORKFLOW.md): a meeting capture through to an evidence pack.
+- [Developer guide](docs/DEVELOPER-GUIDE.md) and [architecture](docs/ARCHITECTURE.md).
+- [Testing](docs/TESTING.md), [recorded results](docs/TEST-NOTES.md), and [0.3 specification](docs/specs/0.3-session-workbench.md).
+- [Product direction](docs/PRODUCT.md), [dependency inventory](docs/DEPENDENCIES.md), and [third-party notices](docs/THIRD-PARTY-NOTICES.md).
 
 ```sh
-# Editor sample and headless exports.
-cargo run --release -- --demo
-cargo run --release -- --demo-export /tmp/framecraft-demo.png
-cargo run --release -- --render input.png output.png
-
-# Source checks.
-cargo fmt --all -- --check
-cargo test --all-targets
-cargo test --no-default-features
-cargo clippy --all-targets -- -D warnings
+cargo run --locked --release -- --demo
+cargo run --locked --release -- --demo-export /tmp/framecraft-demo.png
+cargo run --locked --release -- --demo-session /tmp/framecraft-test-data
+cargo run --locked --release -- --demo-pack /tmp/framecraft-test-data
+cargo run --locked --release -- --render input.png output.png
 ```
 
-The CLI export commands do not create capture sessions. The current source passes 65 tests on Linux, formatting, Linux Clippy, and Apple silicon macOS cross-target Clippy. A linked macOS application and native runtime behaviour remain unverified. Exact commands, limitations, and the desktop test checklist are in [test notes](docs/TEST-NOTES.md).
+`--demo-session` creates 10 synthetic originals and 10 edited variants in a new dated folder; open the printed folder through **Open session…**. `--demo-pack` creates `Framecraft-sample-pack` with 10 PNGs and an offline index inside the supplied parent directory, refusing an existing pack folder. Neither command captures the screen.
 
-## Privacy and platform boundaries
-
-Session originals are saved to the chosen folder before editing. **Redacting an edited copy does not remove the unredacted original in that folder.** Share the edited file deliberately. Undo and the in-memory source also retain the original pixels. There is no automatic edit-history or OCR-text sidecar saving.
-
-Capture currently uses `/usr/sbin/screencapture`. Each sample briefly captures the whole selected display to a private temporary file, then crops it before session saving and OCR. Cleanup is best effort, not secure deletion. Clipboard images and any folder synchronisation are subject to the usual behaviour of other apps on the Mac.
-
-Images are converted to RGBA8. Wide-gamut and HDR fidelity are not implemented; source ICC profiles are discarded without a colour-management transform.
-
-The application UI and compositor are Rust, using GPU-rendered [egui/eframe](https://github.com/emilk/egui) controls rather than AppKit widgets. There is no webview or JavaScript UI. The application's original source is MIT licensed; macOS capture and optional Apple Vision OCR are proprietary operating-system components. Dependency licence metadata is in [the inventory](docs/DEPENDENCIES.md), which is not a manual upstream-source audit.
-
-[Architecture](docs/ARCHITECTURE.md) · [Product direction](docs/PRODUCT.md) · [Cap's licence](https://github.com/CapSoftware/Cap/blob/main/LICENSE)
+The UI and compositor are Rust, using egui/eframe rather than a webview. Original application code is MIT licensed. Apple capture and Vision are operating-system components. No Cap code is reused; Framecraft's proposed distinction is session collection and review, not being the first capture app to use Rust.

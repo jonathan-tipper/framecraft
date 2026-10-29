@@ -1,44 +1,54 @@
-# Verification notes: version 0.2
+# Verification notes: 0.3.0-beta.1
 
-Native macOS runtime behaviour is unverified. Cross-target type-checking, unit tests, and headless layout checks do not establish that capture, OCR, minimisation, or global shortcuts work in a real desktop session.
+Checked on 28–29 October 2026 on macOS 26.6.2 (25G83), Apple silicon (M1 Max, 64 GB), Rust 1.95.0. The release binary is arm64, ad-hoc signed, with `LC_BUILD_VERSION minos 13.0` and SDK 26.5. These results support a local beta test, not a general compatibility or notarisation claim.
 
-Version 0.2 was checked on a Linux host with Rust 1.99.1. The Apple silicon target was checked from Linux, without macOS linking or execution.
+## Automated and native harness results
 
-| Check | Current evidence |
+| Check | Result |
 | --- | --- |
 | `cargo fmt --all -- --check` | Passed |
-| `cargo test --all-targets --locked` | 65 passed: 58 library tests and 7 application tests |
-| `cargo test --no-default-features --locked` | 58 library tests passed |
-| `cargo clippy --all-targets --locked -- -D warnings` | Passed on Linux |
-| `cargo clippy --target aarch64-apple-darwin --all-targets --locked -- -D warnings` | Passed cross-target checking; no macOS linking or execution |
-| Native Apple Vision OCR | Not executed on a Mac |
-| Native capture session and global shortcuts | Not executed on a Mac |
-| Linked application bundle | Not built or launched on a Mac |
+| `cargo test --all-targets --locked --offline` | 131 passed: 109 library + 22 application/UI; 3 explicit native/long tests ignored in this ordinary run |
+| `cargo test --no-default-features --locked --offline` | 105 passed; the same 3 explicit checks ignored |
+| `cargo clippy --all-targets --locked --offline -- -D warnings` | Passed |
+| Two explicit `naming::tests::native_` tests | Passed outside the tool sandbox with synthetic light/dark pixels only; redacted/cropped text absent |
+| `synthetic_change_mode_benchmark_three_runs` | Explicit run passed: 3 repeats, 104 samples per repeat, 22/30 intended frames saved, 8 misses, no duplicates or transition saves |
+| `examples/native-controls-smoke` | Passed outside the sandbox: native status menu, 3 shortcut registrations, state changes, unregister; actual `NSApplication.terminate(None)` returned a queued Quit without replacing winit's delegate |
+| `bash scripts/bundle-macos.sh` | Built a linked release `.app`; ad-hoc signing applied |
+| `codesign --verify --deep --strict --verbose=2` | Valid on disk; designated requirement satisfied |
+| `plutil -lint`, shell syntax and `git diff --check` | Passed |
+| Synthetic CLI fixtures | Created 10 originals + 10 registered edits and a separate 10-PNG/index pack without capturing the desktop |
 
-The passing tests cover source-over highlights, bounded rectangles, freehand points and widths, single-point strokes, joins, clipping, final opaque redactions, crop bounds, output dimensions, persistence, filename collisions, UTC timestamps, visual settling, cooldown, noise, and heading-ranking rules.
+The benchmark's limits and labelled misses are recorded in [change-mode evidence](evidence/change-mode.md). It is a deterministic synthetic corpus, not evidence of real meeting completeness or user benefit.
 
-Five `CaptureHandle` tests cover manual-name priority, stale OCR notifications, keeping an explicitly chosen existing title, rejecting stale automatic names, and serialising image loads with filename changes without blocking other captures. Eight runner tests cover state generations, rapid pause/resume, stale capture errors, arming, manual requests, and limits. Application tests cover editor state, export behaviour, and headless layout; these are not native visual or accessibility tests.
+New regressions cover running/paused source guards, old source-result rejection after a start/stop cycle, hidden editor shortcut isolation, persistence conflicts/recovery, missing edited variants without fallback, bounds/path traversal, stale drag/OCR results, edit replacement protection, current-revision previews, output pixel equality, neutral names, HTML escaping, atomic pack publication and cancellation. Worker tests exercise actual save/naming flow with injected backends, including blocked persistence, queued naming and stop/drain ordering. Failed shortcut registration cannot be bypassed with Resume.
 
-The Apple-target check reports a future-incompatibility warning in the transitive dependency `block 0.1.6`. The current checks pass; that dependency needs attention before a future compiler makes the warning an error.
+## Native UI observations on this Mac
 
-## Required desktop validation
+The signed bundle was launched with synthetic files only. No desktop, meeting or private content was captured during these checks.
 
-| Area | Manual check and expected outcome |
-| --- | --- |
-| Permissions | Deny screen access, grant it later, restart if requested, and confirm actionable errors without silent saves |
-| Region selection | Select a known rectangle on standard and Retina displays; compare saved pixel boundaries with the selected snapshot |
-| Multiple displays | Select each numbered display, including mixed scales; verify size changes pause capture; verify and document the equal-sized reordering limitation |
-| Content movement | Move and resize the meeting window; confirm capture remains at the fixed region and requires reselection |
-| Start and resume | Confirm minimisation occurs before capture; check the app does not appear in its own captured region |
-| Focus and review | Restore Framecraft during each capture mode; confirm capture pauses and resumes only when requested; check change mode can save the last stable frame again after resume |
-| In-flight work | Rapidly pause/resume and stop during capture; old requests and pixels must be discarded, while an atomic save already begun may finish |
-| Global shortcuts | Exercise `Cmd+Option+S/P/X` while another app is focused and Framecraft is minimised; confirm conflicts leave the session paused and registrations release after Stop |
-| Mode timing | Check manual, interval, and change modes against a labelled slide sequence; count missing, duplicate, and transitional frames |
-| Limits and failures | Check small duration/count limits, pause time, permission loss, unavailable displays, and unwritable or full destinations |
-| OCR queue | Test readable headings, diagrams, non-English text, OCR failure, and a slow recogniser; every acknowledged PNG must remain saved |
-| Rename and edit | Rename during pending OCR, open frames for editing, save several edited copies, and confirm originals and unrelated files survive |
-| Redaction | Inspect the exported edited PNG at full resolution; confirm covered pixels are opaque and sharing does not include the original by mistake |
-| Desktop integration | Check native file dialogs, clipboard paste into other apps, GPU presentation, keyboard traversal, and VoiceOver |
-| Release | Build and install on another Mac; test Apple silicon and Intel separately before making support claims |
+- Reopened a ten-frame session using the native folder picker, then relaunched and reopened it from Recent sessions. The session stayed stopped, variants survived and the source required reconfirmation.
+- Copy/Reveal/Drag and pack selection stayed disabled until an output variant was explicitly chosen.
+- Opened a saved edited variant at 1248 × 828 with zero added padding/radius/shadow. The existing styling was not applied again.
+- The first dark-image OCR attempt returned punctuation. That reproduced failure led to bounded OCR-input contrast adjustment. The rebuilt bundle read `Synthetic review frame 1` and its step number in the review dialog. The source/export pixels were unchanged.
+- Copy image reported completion. The attempted receiving-app check in Preview did not produce a document through the automation interface; cross-app paste is therefore **not verified** by this run.
+- Changed the editor style and pressed Cmd+Q. The app remained open, displayed Save/Discard/Cancel and disabled editor mutations. Cancel retained the document. A later Discard exited; a fresh launch showed stopped initial state, and a final clean Cmd+Q left no Framecraft test process.
+- Selected one saved edited frame and opened the final evidence-pack preview. It showed one PNG + `index.html`, a neutral title/folder and the chosen edited image. The destination chooser was opened; UI publication was not completed in this run. The separate CLI pack and atomic writer tests passed.
 
-Performance, memory use, wide-gamut colour, HDR fidelity, signing, and notarisation are not verified. Source images are converted to RGBA8 without an ICC colour transform. The supplied GitHub macOS workflow is a build definition, not evidence of a completed CI run.
+These checks do not establish VoiceOver usability or external drag compatibility. The automation's accessibility listing truncates long lists; screenshot inspection confirmed the pack dialog when its nodes were outside that listing.
+
+## Remaining release and acceptance gates
+
+Keep the related GitHub issues open until their remaining criteria have evidence:
+
+- Real capture permissions: denial, grant/restart, revocation and failure recovery. No full permission cycle was performed.
+- Standard/Retina and multiple displays, equal-size reordering, rotation, unplugging, moving content, timer/manual/change capture, and exclusion of Framecraft controls from captured pixels.
+- Real global-key use while another app has focus, conflict recovery, minimisation/restore, Dock Quit, logout/shutdown, and forced termination. Programmatic native termination and Cmd+Q were checked; force quit cannot guarantee persistence.
+- Actual copy/paste and drag/drop into a browser ticket form and a native document app; delayed-drop file lifetime and Finder failure cases.
+- Native keyboard-only traversal and VoiceOver, cancellation during large folder loads, removable/network volumes and actual full-disk failures.
+- Pack inspection on a second Mac while offline; native UI export/retry/cancel across chosen destinations.
+- macOS 13 and other supported-version runs, Intel build/runtime, clean-Mac installation, Developer ID signing and notarisation.
+- Memory/performance measurements, wide-gamut/HDR fidelity, the human pilot [#9](https://github.com/jonathan-tipper/framecraft/issues/9), and scrolling demand [#18](https://github.com/jonathan-tipper/framecraft/issues/18).
+
+The beta preserves a fixed display-region adapter. [The targeting ADR](decisions/0001-capture-targeting.md) records why stable source/window migration remains open. Session renaming requires hard links; unsupported filesystems fail without deleting the original. Local atomic replacement, fsync and file locking are the supported storage contract.
+
+Use [TESTING.md](TESTING.md) to extend this record. Record failures and unperformed checks alongside passes; do not infer completion from feature implementation. Version 0.2's historical Linux evidence remains in Git history.

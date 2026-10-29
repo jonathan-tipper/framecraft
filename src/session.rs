@@ -1,8 +1,9 @@
 //! Screenshot-session persistence and visual change detection, independent of UI.
 //!
 //! All filename timestamps are UTC. Session folders and PNGs are created without
-//! replacing existing files. Only flattened RGBA pixels are written; OCR text,
-//! source metadata and editable layers are never saved as sidecars.
+//! replacing existing files. PNGs contain flattened RGBA pixels. A versioned
+//! manifest records capture identity and saved-copy relationships, never OCR
+//! transcripts, source-image metadata or editable layers.
 
 use std::fs::{self, File};
 use std::io;
@@ -10,6 +11,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use crate::library::{CaptureVariant, ImageState, SessionLibrary, VariantInfo};
 use image::imageops::FilterType;
 use image::{ExtendedColorType, ImageEncoder, RgbaImage};
 use tempfile::NamedTempFile;
@@ -59,9 +61,10 @@ pub struct CaptureHandle {
 }
 
 #[derive(Debug)]
-struct CaptureState {
+pub(crate) struct CaptureState {
     capture: SavedCapture,
     manually_named: bool,
+    identity: Option<(Arc<SessionLibrary>, String)>,
 }
 
 impl CaptureHandle {
@@ -70,8 +73,106 @@ impl CaptureHandle {
             inner: Arc::new(Mutex::new(CaptureState {
                 capture,
                 manually_named: false,
+                identity: None,
             })),
         }
+    }
+
+    pub(crate) fn tracked(capture: SavedCapture, library: Arc<SessionLibrary>, id: String) -> Self {
+        let mut handles = library
+            .handles
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some(inner) = handles.get(&id).and_then(std::sync::Weak::upgrade) {
+            return Self { inner };
+        }
+        let handle = Self {
+            inner: Arc::new(Mutex::new(CaptureState {
+                capture,
+                manually_named: false,
+                identity: Some((library.clone(), id.clone())),
+            })),
+        };
+        handles.insert(id, Arc::downgrade(&handle.inner));
+        handle
+    }
+
+    pub fn id(&self) -> Result<String, String> {
+        self.lock()?
+            .identity
+            .as_ref()
+            .map(|(_, id)| id.clone())
+            .ok_or_else(|| "This capture has no persistent identity.".into())
+    }
+
+    pub fn metadata_warning(&self) -> Option<String> {
+        self.lock().ok()?.identity.as_ref()?.0.warning()
+    }
+
+    pub fn variants(&self) -> Result<Vec<VariantInfo>, String> {
+        let state = self.lock()?;
+        if let Some((library, id)) = &state.identity {
+            library.variants(id)
+        } else {
+            Ok(vec![VariantInfo {
+                variant: CaptureVariant::Original,
+                path: state.capture.path.clone(),
+                state: if state.capture.path.exists() {
+                    ImageState::Available
+                } else {
+                    ImageState::Missing
+                },
+            }])
+        }
+    }
+
+    pub fn variant_choices(&self) -> Result<Vec<VariantInfo>, String> {
+        let state = self.lock()?;
+        if let Some((library, id)) = &state.identity {
+            library.variant_choices(id)
+        } else {
+            Ok(vec![VariantInfo {
+                variant: CaptureVariant::Original,
+                path: state.capture.path.clone(),
+                state: ImageState::Available,
+            }])
+        }
+    }
+
+    pub fn load_variant(&self, variant: &CaptureVariant) -> Result<(RgbaImage, PathBuf), String> {
+        let state = self.lock()?;
+        let path = if let Some((library, id)) = &state.identity {
+            let info = library.variant(id, variant)?;
+            if info.state != ImageState::Available {
+                return Err(info.state.label());
+            }
+            info.path
+        } else if *variant == CaptureVariant::Original {
+            state.capture.path.clone()
+        } else {
+            return Err("The selected saved edit is unavailable.".into());
+        };
+        Ok((crate::editor::load_image(&path)?, path))
+    }
+
+    pub fn register_edit(&self, path: &Path) -> Result<(), String> {
+        let state = self.lock()?;
+        let (library, id) = state
+            .identity
+            .as_ref()
+            .ok_or("This capture has no persistent session metadata.")?;
+        library.register_edit(id, path)
+    }
+
+    pub fn import_replacement(&self, source: &Path) -> Result<(), String> {
+        let mut state = self.lock()?;
+        let (library, id) = state
+            .identity
+            .as_ref()
+            .ok_or("This capture has no persistent session metadata.")?;
+        let path = library.import_replacement(id, source)?;
+        state.capture.path = path;
+        Ok(())
     }
 
     fn lock(&self) -> Result<MutexGuard<'_, CaptureState>, String> {
@@ -92,15 +193,19 @@ impl CaptureHandle {
         let renamed = rename_capture(&state.capture, title)?;
         state.capture = renamed.clone();
         state.manually_named = true;
+        if let Some((library, id)) = &state.identity {
+            let _ = library.renamed(id, &renamed);
+        }
         Ok(renamed)
     }
 
     /// Resolve and decode under the same lock used by renames. Run this method
     /// on a background worker; the returned path is only a naming suggestion.
     pub fn load(&self) -> Result<(RgbaImage, PathBuf), String> {
-        self.load_with(crate::editor::load_image)
+        self.load_variant(&CaptureVariant::Original)
     }
 
+    #[cfg(test)]
     fn load_with(
         &self,
         decode: impl FnOnce(&Path) -> Result<RgbaImage, String>,
@@ -127,6 +232,9 @@ impl CaptureHandle {
         }
         let renamed = rename_capture(&state.capture, title)?;
         state.capture = renamed.clone();
+        if let Some((library, id)) = &state.identity {
+            let _ = library.renamed(id, &renamed);
+        }
         Ok(Some(renamed))
     }
 }
@@ -135,6 +243,9 @@ impl CaptureHandle {
 pub struct SessionStore {
     folder: PathBuf,
     sequence: u64,
+    library: Arc<SessionLibrary>,
+    #[cfg(test)]
+    persistence_gate: Option<(std::sync::mpsc::Sender<()>, std::sync::mpsc::Receiver<()>)>,
 }
 
 impl SessionStore {
@@ -157,9 +268,13 @@ impl SessionStore {
                         let _ = fs::remove_dir(&folder);
                         format!("Could not sync the new session directory: {e}")
                     })?;
+                    let library = SessionLibrary::create(&folder, title)?;
                     return Ok(Self {
                         folder,
                         sequence: 0,
+                        library,
+                        #[cfg(test)]
+                        persistence_gate: None,
                     });
                 }
                 Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
@@ -171,8 +286,29 @@ impl SessionStore {
         Err("There are too many sessions with the same name. Choose another title.".into())
     }
 
+    #[cfg(test)]
+    pub(crate) fn test_persistence_gate(
+        &mut self,
+        entered: std::sync::mpsc::Sender<()>,
+        release: std::sync::mpsc::Receiver<()>,
+    ) {
+        self.persistence_gate = Some((entered, release));
+    }
+
     pub fn folder(&self) -> &Path {
         &self.folder
+    }
+
+    pub fn library(&self) -> Arc<SessionLibrary> {
+        self.library.clone()
+    }
+
+    pub fn handle(&self, capture: SavedCapture) -> CaptureHandle {
+        if let Some(id) = self.library.identity_for(&capture) {
+            CaptureHandle::tracked(capture, self.library.clone(), id)
+        } else {
+            CaptureHandle::new(capture)
+        }
     }
 
     /// Atomically persist a PNG, then acknowledge its sequence number.
@@ -204,6 +340,12 @@ impl SessionStore {
             .sync_all()
             .map_err(|e| format!("Could not sync the capture to disk: {e}"))?;
 
+        #[cfg(test)]
+        if let Some((entered, release)) = self.persistence_gate.take() {
+            entered.send(()).map_err(|e| e.to_string())?;
+            release.recv().map_err(|e| e.to_string())?;
+        }
+
         let mut sequence = self.sequence;
         for _ in 0..MAX_COLLISIONS {
             sequence = sequence
@@ -221,11 +363,16 @@ impl SessionStore {
                         ));
                     }
                     self.sequence = sequence;
-                    return Ok(SavedCapture {
+                    let capture = SavedCapture {
                         path,
                         title,
                         sequence,
-                    });
+                    };
+                    // The durable PNG is never discarded because metadata failed.
+                    if let Err(error) = self.library.add_capture(&capture) {
+                        self.library.note_metadata_failure(error);
+                    }
+                    return Ok(capture);
                 }
                 Err(error) if error.error.kind() == io::ErrorKind::AlreadyExists => {
                     temporary = error.file;
@@ -243,6 +390,14 @@ impl SessionStore {
 /// Timestamp and sequence remain intact; new names stay in the same directory.
 /// A blank title is a no-op. Hard linking keeps the PNG bytes unchanged.
 pub fn rename_capture(capture: &SavedCapture, new_title: &str) -> Result<SavedCapture, String> {
+    rename_capture_with(capture, new_title, |from, to| fs::hard_link(from, to))
+}
+
+fn rename_capture_with(
+    capture: &SavedCapture,
+    new_title: &str,
+    mut hard_link: impl FnMut(&Path, &Path) -> io::Result<()>,
+) -> Result<SavedCapture, String> {
     let title = display_title(new_title);
     if title.is_empty() {
         return Ok(capture.clone());
@@ -284,7 +439,7 @@ pub fn rename_capture(capture: &SavedCapture, new_title: &str) -> Result<SavedCa
                 sequence: capture.sequence,
             });
         }
-        match fs::hard_link(&capture.path, &path) {
+        match hard_link(&capture.path, &path) {
             Ok(()) => {
                 if let Err(error) = sync_directory(parent) {
                     let _ = fs::remove_file(&path);
@@ -297,7 +452,7 @@ pub fn rename_capture(capture: &SavedCapture, new_title: &str) -> Result<SavedCa
                 if let Err(error) = sync_directory(parent) {
                     // Restore the old link if a durability check failed. Never
                     // remove the new name unless the old name was restored.
-                    if fs::hard_link(&path, &capture.path).is_ok() {
+                    if hard_link(&path, &capture.path).is_ok() {
                         let _ = fs::remove_file(&path);
                         return Err(format!("Could not sync the capture rename: {error}"));
                     }
@@ -311,7 +466,7 @@ pub fn rename_capture(capture: &SavedCapture, new_title: &str) -> Result<SavedCa
                 });
             }
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => continue,
-            Err(error) => return Err(format!("Could not rename the capture: {error}")),
+            Err(error) => return Err(format!("This destination cannot safely rename the capture using a hard link. The original is unchanged. Copy the session to a local APFS or HFS+ disk and retry: {error}")),
         }
     }
     Err("There are too many captures with the requested title.".into())
@@ -614,7 +769,7 @@ mod tests {
     }
 
     #[test]
-    fn saves_are_pngs_with_sequential_names_and_no_sidecars() {
+    fn saves_are_pngs_with_sequential_names_and_bounded_session_metadata() {
         let base = tempfile::tempdir().unwrap();
         let mut store = SessionStore::create(base.path(), "Work").unwrap();
         let pixels = frame(90);
@@ -633,7 +788,14 @@ mod tests {
             .unwrap()
             .ends_with("-0001-board-slides.png"));
         assert_eq!(image::open(&first.path).unwrap().into_rgba8(), pixels);
-        assert_eq!(fs::read_dir(store.folder()).unwrap().count(), 2);
+        assert_eq!(
+            fs::read_dir(store.folder())
+                .unwrap()
+                .filter_map(Result::ok)
+                .filter(|e| e.path().extension().is_some_and(|x| x == "png"))
+                .count(),
+            2
+        );
     }
 
     #[test]
@@ -647,7 +809,14 @@ mod tests {
             .is_err());
         assert_eq!(store.sequence, 1);
         assert_eq!(fs::read(&first.path).unwrap(), original);
-        assert_eq!(fs::read_dir(store.folder()).unwrap().count(), 1);
+        assert_eq!(
+            fs::read_dir(store.folder())
+                .unwrap()
+                .filter_map(Result::ok)
+                .filter(|e| e.path().extension().is_some_and(|x| x == "png"))
+                .count(),
+            1
+        );
     }
 
     #[test]
@@ -707,6 +876,30 @@ mod tests {
     }
 
     #[test]
+    fn unsupported_hardlinks_reject_rename_without_changing_the_original() {
+        let base = tempfile::tempdir().unwrap();
+        let mut store = SessionStore::create(base.path(), "Work").unwrap();
+        let capture = store
+            .save(&frame(100), Some("Original"), Trigger::Manual)
+            .unwrap();
+        let before = fs::read(&capture.path).unwrap();
+        let error = rename_capture_with(&capture, "Updated", |_, _| {
+            Err(io::Error::new(io::ErrorKind::Unsupported, "no hard links"))
+        })
+        .unwrap_err();
+        assert!(error.contains("original is unchanged"));
+        assert_eq!(fs::read(&capture.path).unwrap(), before);
+        assert_eq!(
+            fs::read_dir(store.folder())
+                .unwrap()
+                .filter_map(Result::ok)
+                .filter(|e| e.path().extension().is_some_and(|x| x == "png"))
+                .count(),
+            1
+        );
+    }
+
+    #[test]
     fn handle_manual_rename_wins_over_pending_ocr() {
         let base = tempfile::tempdir().unwrap();
         let mut store = SessionStore::create(base.path(), "Work").unwrap();
@@ -724,7 +917,14 @@ mod tests {
         assert_eq!(current.title, "My chosen title");
         assert_eq!(current.path, manual.path);
         assert_eq!(ocr_handle.load().unwrap(), (pixels, manual.path));
-        assert_eq!(fs::read_dir(store.folder()).unwrap().count(), 1);
+        assert_eq!(
+            fs::read_dir(store.folder())
+                .unwrap()
+                .filter_map(Result::ok)
+                .filter(|e| e.path().extension().is_some_and(|x| x == "png"))
+                .count(),
+            1
+        );
     }
 
     #[test]
@@ -750,7 +950,14 @@ mod tests {
             .rename_if_unchanged(&stale_notification, "Another OCR title")
             .unwrap()
             .is_none());
-        assert_eq!(fs::read_dir(store.folder()).unwrap().count(), 1);
+        assert_eq!(
+            fs::read_dir(store.folder())
+                .unwrap()
+                .filter_map(Result::ok)
+                .filter(|e| e.path().extension().is_some_and(|x| x == "png"))
+                .count(),
+            1
+        );
     }
 
     #[test]

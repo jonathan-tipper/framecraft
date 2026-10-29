@@ -32,6 +32,9 @@ bundle_dir="$project_dir/dist/Framecraft.app"
 mkdir -p "$bundle_dir/Contents/MacOS" "$bundle_dir/Contents/Resources"
 cp "$binary_path" "$bundle_dir/Contents/MacOS/framecraft"
 cp "$project_dir/packaging/Info.plist" "$bundle_dir/Contents/Info.plist"
+cp "$project_dir/docs/THIRD-PARTY-NOTICES.md" "$bundle_dir/Contents/Resources/THIRD-PARTY-NOTICES.md"
+cp "$project_dir/docs/USER-GUIDE.md" "$bundle_dir/Contents/Resources/USER-GUIDE.md"
+cp "$project_dir/LICENSE" "$bundle_dir/Contents/Resources/LICENSE"
 chmod +x "$bundle_dir/Contents/MacOS/framecraft"
 
 if command -v codesign >/dev/null 2>&1; then
