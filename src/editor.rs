@@ -3,8 +3,9 @@
 //! Redactions are deliberately applied last, before cropping and presentation.
 //! The returned image contains pixels only: no original layers or metadata.
 
-use std::{borrow::Cow, path::Path};
+use std::{borrow::Cow, path::Path, sync::OnceLock};
 
+use ab_glyph::{Font, FontRef, ScaleFont};
 use image::{DynamicImage, ImageDecoder, ImageFormat, ImageReader, Limits, Rgba, RgbaImage};
 
 pub const MAX_PIXELS: u64 = 64_000_000;
@@ -12,6 +13,8 @@ pub const MAX_DIMENSION: u32 = 16_384;
 const REDACTION_COLOUR: Rgba<u8> = Rgba([24, 26, 32, 255]);
 const MAX_ANNOTATIONS: usize = 1_000;
 const MAX_FREEHAND_POINTS: usize = 10_000;
+pub const MAX_TEXT_CHARS: usize = 2_048;
+pub const MAX_TEXT_LINES: usize = 32;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Point {
@@ -27,7 +30,7 @@ pub struct Rect {
     pub height: u32,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Annotation {
     Arrow {
         from: Point,
@@ -51,6 +54,20 @@ pub enum Annotation {
     },
     Redact {
         rect: Rect,
+    },
+    Text {
+        position: Point,
+        text: String,
+        font_size: f32,
+        colour: [u8; 4],
+        background: Option<[u8; 4]>,
+    },
+    Step {
+        center: Point,
+        number: u32,
+        radius: f32,
+        colour: [u8; 4],
+        text_colour: [u8; 4],
     },
 }
 
@@ -266,6 +283,37 @@ fn validate_annotations(doc: &Document) -> Result<(), String> {
                     return Err("A redaction must cover at least one source pixel.".into());
                 }
             }
+            Annotation::Text {
+                position,
+                text,
+                font_size,
+                ..
+            } => {
+                if !valid_point(*position)
+                    || !font_size.is_finite()
+                    || !(8.0..=256.0).contains(font_size)
+                    || text.trim().is_empty()
+                    || text.chars().count() > MAX_TEXT_CHARS
+                    || text.split('\n').count() > MAX_TEXT_LINES
+                    || text.chars().any(|c| c.is_control() && c != '\n')
+                {
+                    return Err(format!("Text labels need 1 to {MAX_TEXT_CHARS} characters, at most {MAX_TEXT_LINES} lines, and a font size from 8 to 256 pixels. Only newline controls are supported."));
+                }
+            }
+            Annotation::Step {
+                center,
+                number,
+                radius,
+                ..
+            } => {
+                if !valid_point(*center)
+                    || !(1..=9_999).contains(number)
+                    || !radius.is_finite()
+                    || !(8.0..=256.0).contains(radius)
+                {
+                    return Err("Steps need a number from 1 to 9999, finite coordinates, and a radius from 8 to 256 pixels.".into());
+                }
+            }
         }
     }
     Ok(())
@@ -300,6 +348,24 @@ pub fn render(doc: &Document) -> Result<RgbaImage, String> {
                     width,
                 } => draw_freehand(target, points, *colour, *width),
                 Annotation::Redact { .. } => {}
+                Annotation::Text {
+                    position,
+                    text,
+                    font_size,
+                    colour,
+                    background,
+                } => {
+                    draw_text(target, *position, text, *font_size, *colour, *background);
+                }
+                Annotation::Step {
+                    center,
+                    number,
+                    radius,
+                    colour,
+                    text_colour,
+                } => {
+                    draw_step(target, *center, *number, *radius, *colour, *text_colour);
+                }
             }
         }
         // Never alpha-blend redactions. Opaque replacement destroys source pixels.
@@ -473,20 +539,7 @@ fn distance_to_segment(x: f32, y: f32, from: Point, to: Point) -> f32 {
 }
 
 fn draw_arrow(image: &mut RgbaImage, from: Point, to: Point, colour: [u8; 4], width: f32) {
-    let dx = to.x - from.x;
-    let dy = to.y - from.y;
-    let length = dx.hypot(dy);
-    let angle = dy.atan2(dx);
-    let head_length = (width * 4.0).max(14.0).min(length * 0.45);
-    let a = Point {
-        x: to.x - head_length * (angle - 0.5).cos(),
-        y: to.y - head_length * (angle - 0.5).sin(),
-    };
-    let b = Point {
-        x: to.x - head_length * (angle + 0.5).cos(),
-        y: to.y - head_length * (angle + 0.5).sin(),
-    };
-    draw_segments(image, &[(from, to), (to, a), (to, b)], colour, width);
+    draw_segments(image, &arrow_segments(from, to, width), colour, width);
 }
 
 fn draw_freehand(image: &mut RgbaImage, points: &[Point], colour: [u8; 4], width: f32) {
@@ -578,6 +631,396 @@ fn draw_segments(image: &mut RgbaImage, segments: &[(Point, Point)], colour: [u8
             }
         }
     }
+}
+
+fn valid_point(point: Point) -> bool {
+    [point.x, point.y]
+        .iter()
+        .all(|value| value.is_finite() && value.abs() <= 1_000_000.0)
+}
+
+fn annotation_font() -> &'static FontRef<'static> {
+    static FONT: OnceLock<FontRef<'static>> = OnceLock::new();
+    FONT.get_or_init(|| {
+        FontRef::try_from_slice(epaint_default_fonts::HACK_REGULAR)
+            .expect("the bundled Hack font is valid")
+    })
+}
+
+/// Plain Unicode scalar layout with explicit line breaks. Unsupported glyphs
+/// become '?'. No OS fonts, shaping, wrapping, or remote font lookup is involved.
+fn text_layout(text: &str, size: f32) -> (Vec<ab_glyph::Glyph>, Point, Point) {
+    let font = annotation_font().as_scaled(size);
+    let mut glyphs = Vec::with_capacity(text.chars().count());
+    let mut cursor = ab_glyph::point(4.0, 4.0 + font.ascent());
+    let mut minimum = Point { x: 0.0, y: 0.0 };
+    let mut maximum = Point {
+        x: 8.0,
+        y: size * 1.25 + 8.0,
+    };
+    for character in text.chars() {
+        if character == '\n' {
+            cursor.x = 4.0;
+            cursor.y += size * 1.25;
+            maximum.y += size * 1.25;
+            continue;
+        }
+        let mut id = font.glyph_id(character);
+        if id.0 == 0 {
+            id = font.glyph_id('?');
+        }
+        let glyph = id.with_scale_and_position(size, cursor);
+        if let Some(outline) = font.outline_glyph(glyph.clone()) {
+            let bounds = outline.px_bounds();
+            minimum.x = minimum.x.min(bounds.min.x);
+            minimum.y = minimum.y.min(bounds.min.y);
+            maximum.x = maximum.x.max(bounds.max.x + 4.0);
+            maximum.y = maximum.y.max(bounds.max.y + 4.0);
+        }
+        cursor.x += font.h_advance(id);
+        maximum.x = maximum.x.max(cursor.x + 4.0);
+        glyphs.push(glyph);
+    }
+    (glyphs, minimum, maximum)
+}
+
+fn draw_text(
+    image: &mut RgbaImage,
+    position: Point,
+    text: &str,
+    size: f32,
+    colour: [u8; 4],
+    background: Option<[u8; 4]>,
+) {
+    let (glyphs, minimum, maximum) = text_layout(text, size);
+    if let Some(background) = background {
+        let left = (position.x + minimum.x)
+            .floor()
+            .clamp(0.0, image.width() as f32) as u32;
+        let top = (position.y + minimum.y)
+            .floor()
+            .clamp(0.0, image.height() as f32) as u32;
+        let right = (position.x + maximum.x)
+            .ceil()
+            .clamp(0.0, image.width() as f32) as u32;
+        let bottom = (position.y + maximum.y)
+            .ceil()
+            .clamp(0.0, image.height() as f32) as u32;
+        draw_highlight(
+            image,
+            Rect {
+                x: left,
+                y: top,
+                width: right.saturating_sub(left),
+                height: bottom.saturating_sub(top),
+            },
+            background,
+        );
+    }
+    if colour[3] == 0 {
+        return;
+    }
+    for mut glyph in glyphs {
+        glyph.position.x += position.x;
+        glyph.position.y += position.y;
+        let Some(outline) = annotation_font().outline_glyph(glyph) else {
+            continue;
+        };
+        let bounds = outline.px_bounds();
+        if bounds.max.x <= 0.0
+            || bounds.max.y <= 0.0
+            || bounds.min.x >= image.width() as f32
+            || bounds.min.y >= image.height() as f32
+        {
+            continue;
+        }
+        outline.draw(|x, y, coverage| {
+            let x = bounds.min.x as i64 + i64::from(x);
+            let y = bounds.min.y as i64 + i64::from(y);
+            if x >= 0 && y >= 0 && x < i64::from(image.width()) && y < i64::from(image.height()) {
+                blend(image.get_pixel_mut(x as u32, y as u32), colour, coverage);
+            }
+        });
+    }
+}
+
+fn draw_step(
+    image: &mut RgbaImage,
+    center: Point,
+    number: u32,
+    radius: f32,
+    colour: [u8; 4],
+    text_colour: [u8; 4],
+) {
+    let Some(bounds) = stroke_bounds([center], radius * 2.0, image.width(), image.height()) else {
+        return;
+    };
+    for y in bounds.y..bounds.y + bounds.height {
+        for x in bounds.x..bounds.x + bounds.width {
+            let distance = (x as f32 + 0.5 - center.x).hypot(y as f32 + 0.5 - center.y);
+            blend(
+                image.get_pixel_mut(x, y),
+                colour,
+                (radius + 0.5 - distance).clamp(0.0, 1.0),
+            );
+        }
+    }
+    let text = number.to_string();
+    let size = radius * (1.25_f32).min(2.4 / text.len() as f32);
+    let (glyphs, _, _) = text_layout(&text, size);
+    // Centre the ink rather than the font's ascender and padding box.
+    let mut min = ab_glyph::point(f32::INFINITY, f32::INFINITY);
+    let mut max = ab_glyph::point(f32::NEG_INFINITY, f32::NEG_INFINITY);
+    for glyph in glyphs {
+        if let Some(outline) = annotation_font().outline_glyph(glyph) {
+            let bounds = outline.px_bounds();
+            min.x = min.x.min(bounds.min.x);
+            min.y = min.y.min(bounds.min.y);
+            max.x = max.x.max(bounds.max.x);
+            max.y = max.y.max(bounds.max.y);
+        }
+    }
+    draw_text(
+        image,
+        Point {
+            x: center.x - (min.x + max.x) / 2.0,
+            y: center.y - (min.y + max.y) / 2.0,
+        },
+        &text,
+        size,
+        text_colour,
+        None,
+    );
+}
+
+fn arrow_segments(from: Point, to: Point, width: f32) -> [(Point, Point); 3] {
+    let angle = (to.y - from.y).atan2(to.x - from.x);
+    let head = (width * 4.0)
+        .max(14.0)
+        .min((to.x - from.x).hypot(to.y - from.y) * 0.45);
+    [
+        (from, to),
+        (
+            to,
+            Point {
+                x: to.x - head * (angle - 0.5).cos(),
+                y: to.y - head * (angle - 0.5).sin(),
+            },
+        ),
+        (
+            to,
+            Point {
+                x: to.x - head * (angle + 0.5).cos(),
+                y: to.y - head * (angle + 0.5).sin(),
+            },
+        ),
+    ]
+}
+
+fn point_bounds(points: impl IntoIterator<Item = Point>, margin: f32) -> Option<(Point, Point)> {
+    let mut min = Point {
+        x: f32::INFINITY,
+        y: f32::INFINITY,
+    };
+    let mut max = Point {
+        x: f32::NEG_INFINITY,
+        y: f32::NEG_INFINITY,
+    };
+    for p in points {
+        if !valid_point(p) {
+            return None;
+        }
+        min.x = min.x.min(p.x);
+        min.y = min.y.min(p.y);
+        max.x = max.x.max(p.x);
+        max.y = max.y.max(p.y);
+    }
+    if !min.x.is_finite() || !margin.is_finite() || margin < 0.0 {
+        return None;
+    }
+    Some((
+        Point {
+            x: min.x - margin,
+            y: min.y - margin,
+        },
+        Point {
+            x: max.x + margin,
+            y: max.y + margin,
+        },
+    ))
+}
+
+/// Source-coordinate bounds, independent of crop and presentation padding.
+/// Text bounds include a 4-pixel inset; strokes include their width.
+pub fn annotation_bounds(annotation: &Annotation) -> Option<(Point, Point)> {
+    match annotation {
+        Annotation::Arrow {
+            from, to, width, ..
+        } => point_bounds(
+            arrow_segments(*from, *to, *width)
+                .into_iter()
+                .flat_map(|(a, b)| [a, b]),
+            *width / 2.0,
+        ),
+        Annotation::Freehand { points, width, .. } => {
+            point_bounds(points.iter().copied(), *width / 2.0)
+        }
+        Annotation::Rectangle { rect, .. }
+        | Annotation::Highlight { rect, .. }
+        | Annotation::Redact { rect } => {
+            if rect.width == 0 || rect.height == 0 {
+                return None;
+            }
+            Some((
+                Point {
+                    x: rect.x as f32,
+                    y: rect.y as f32,
+                },
+                Point {
+                    x: (u64::from(rect.x) + u64::from(rect.width)) as f32,
+                    y: (u64::from(rect.y) + u64::from(rect.height)) as f32,
+                },
+            ))
+        }
+        Annotation::Text {
+            position,
+            text,
+            font_size,
+            ..
+        } => {
+            if !valid_point(*position)
+                || !font_size.is_finite()
+                || !(8.0..=256.0).contains(font_size)
+                || text.chars().count() > MAX_TEXT_CHARS
+                || text.split('\n').count() > MAX_TEXT_LINES
+            {
+                return None;
+            }
+            let (_, min, max) = text_layout(text, *font_size);
+            Some((
+                Point {
+                    x: position.x + min.x,
+                    y: position.y + min.y,
+                },
+                Point {
+                    x: position.x + max.x,
+                    y: position.y + max.y,
+                },
+            ))
+        }
+        Annotation::Step { center, radius, .. } => point_bounds([*center], *radius),
+    }
+}
+
+/// Select the top visible annotation. Redactions have final-pass priority.
+/// A UI may expose the annotation list to select an obscured item by index.
+pub fn hit_test(annotations: &[Annotation], point: Point, tolerance: f32) -> Option<usize> {
+    if !valid_point(point) || !tolerance.is_finite() {
+        return None;
+    }
+    let tolerance = tolerance.clamp(0.0, 256.0);
+    for redaction_pass in [true, false] {
+        for (index, annotation) in annotations.iter().enumerate().rev() {
+            if matches!(annotation, Annotation::Redact { .. }) != redaction_pass {
+                continue;
+            }
+            let Some((min, max)) = annotation_bounds(annotation) else {
+                continue;
+            };
+            if point.x < min.x - tolerance
+                || point.y < min.y - tolerance
+                || point.x > max.x + tolerance
+                || point.y > max.y + tolerance
+            {
+                continue;
+            }
+            let hit = match annotation {
+                Annotation::Arrow {
+                    from, to, width, ..
+                } => arrow_segments(*from, *to, *width).iter().any(|(a, b)| {
+                    distance_to_segment(point.x, point.y, *a, *b) <= width / 2.0 + tolerance
+                }),
+                Annotation::Freehand { points, width, .. } => {
+                    if let [p] = points.as_slice() {
+                        (point.x - p.x).hypot(point.y - p.y) <= width / 2.0 + tolerance
+                    } else {
+                        points.windows(2).any(|pair| {
+                            distance_to_segment(point.x, point.y, pair[0], pair[1])
+                                <= width / 2.0 + tolerance
+                        })
+                    }
+                }
+                Annotation::Step { center, radius, .. } => {
+                    (point.x - center.x).hypot(point.y - center.y) <= radius + tolerance
+                }
+                Annotation::Rectangle { width, .. } => {
+                    point.x <= min.x + *width as f32 + tolerance
+                        || point.x >= max.x - *width as f32 - tolerance
+                        || point.y <= min.y + *width as f32 + tolerance
+                        || point.y >= max.y - *width as f32 - tolerance
+                }
+                _ => true,
+            };
+            if hit {
+                return Some(index);
+            }
+        }
+    }
+    None
+}
+
+/// Translate as one shape, clamping its bounds to the source. Oversized marks
+/// return an error instead of distorting their geometry. Rectangles move in
+/// whole pixels; other annotations preserve subpixel positions.
+pub fn translate_annotation(
+    annotation: &mut Annotation,
+    delta: Point,
+    width: u32,
+    height: u32,
+) -> Result<bool, String> {
+    check_dimensions(width, height)?;
+    if !valid_point(delta) {
+        return Err("Movement must have finite, bounded coordinates.".into());
+    }
+    let (min, max) = annotation_bounds(annotation).ok_or("The annotation has invalid bounds.")?;
+    if max.x - min.x > width as f32 || max.y - min.y > height as f32 {
+        return Err(
+            "This annotation is larger than the source image; reduce its size before moving it."
+                .into(),
+        );
+    }
+    let mut dx = delta.x.clamp(-min.x, width as f32 - max.x);
+    let mut dy = delta.y.clamp(-min.y, height as f32 - max.y);
+    if matches!(
+        annotation,
+        Annotation::Rectangle { .. } | Annotation::Highlight { .. } | Annotation::Redact { .. }
+    ) {
+        dx = dx.round();
+        dy = dy.round();
+    }
+    if dx == 0.0 && dy == 0.0 {
+        return Ok(false);
+    }
+    let shift = |p: &mut Point| {
+        p.x += dx;
+        p.y += dy;
+    };
+    match annotation {
+        Annotation::Arrow { from, to, .. } => {
+            shift(from);
+            shift(to);
+        }
+        Annotation::Freehand { points, .. } => points.iter_mut().for_each(shift),
+        Annotation::Rectangle { rect, .. }
+        | Annotation::Highlight { rect, .. }
+        | Annotation::Redact { rect } => {
+            rect.x = (rect.x as f32 + dx).round() as u32;
+            rect.y = (rect.y as f32 + dy).round() as u32;
+        }
+        Annotation::Text { position, .. } => shift(position),
+        Annotation::Step { center, .. } => shift(center),
+    }
+    Ok(true)
 }
 
 /// A generated local sample. It does not depict or contain real user data.
@@ -1218,5 +1661,274 @@ mod tests {
         let demo = demo_image();
         assert_eq!(demo.dimensions(), (1120, 700));
         assert!(demo.pixels().all(|p| p[3] == 255));
+    }
+    #[test]
+    fn text_and_steps_share_flattened_pixels_with_crop_and_redaction() {
+        let mut doc = bare_document();
+        doc.source = RgbaImage::from_pixel(180, 100, Rgba([255, 255, 255, 255]));
+        doc.annotations = vec![
+            Annotation::Redact {
+                rect: Rect {
+                    x: 8,
+                    y: 8,
+                    width: 30,
+                    height: 30,
+                },
+            },
+            Annotation::Text {
+                position: Point { x: 8.0, y: 8.0 },
+                text: "Café\nNext".into(),
+                font_size: 24.0,
+                colour: [0, 0, 0, 255],
+                background: None,
+            },
+            Annotation::Step {
+                center: Point { x: 120.0, y: 40.0 },
+                number: 12,
+                radius: 20.0,
+                colour: [200, 0, 0, 255],
+                text_colour: [255; 4],
+            },
+        ];
+        let full = render(&doc).unwrap();
+        assert_eq!(full.get_pixel(15, 15), &REDACTION_COLOUR);
+        assert_ne!(full.get_pixel(120, 30), doc.source.get_pixel(120, 30));
+        assert!(full
+            .enumerate_pixels()
+            .any(|(x, y, p)| x > 38 && y < 70 && *p == Rgba([0, 0, 0, 255])));
+        doc.crop = Some(Rect {
+            x: 40,
+            y: 10,
+            width: 130,
+            height: 80,
+        });
+        assert_eq!(
+            render(&doc).unwrap(),
+            image::imageops::crop_imm(&full, 40, 10, 130, 80).to_image()
+        );
+    }
+
+    #[test]
+    fn unicode_missing_glyphs_have_predictable_visible_fallback() {
+        let mut doc = bare_document();
+        doc.source = RgbaImage::from_pixel(150, 70, Rgba([255; 4]));
+        let text = |value: &str| Annotation::Text {
+            position: Point { x: 5.0, y: 5.0 },
+            text: value.into(),
+            font_size: 28.0,
+            colour: [0, 0, 0, 255],
+            background: None,
+        };
+        doc.annotations = vec![text("\u{10ffff}")];
+        let fallback = render(&doc).unwrap();
+        doc.annotations = vec![text("?")];
+        assert_eq!(fallback, render(&doc).unwrap());
+        assert_ne!(fallback, doc.source);
+        doc.annotations = vec![text(&"a".repeat(MAX_TEXT_CHARS + 1))];
+        assert!(render(&doc).is_err());
+        doc.annotations = vec![text("\u{0007}")];
+        assert!(render(&doc).is_err());
+    }
+
+    #[test]
+    fn selection_follows_visible_order_and_move_preserves_shape_within_source() {
+        let mut marks = vec![
+            Annotation::Redact {
+                rect: Rect {
+                    x: 10,
+                    y: 10,
+                    width: 20,
+                    height: 20,
+                },
+            },
+            Annotation::Highlight {
+                rect: Rect {
+                    x: 5,
+                    y: 5,
+                    width: 40,
+                    height: 40,
+                },
+                colour: [255; 4],
+            },
+        ];
+        assert_eq!(hit_test(&marks, Point { x: 15.0, y: 15.0 }, 0.0), Some(0));
+        assert_eq!(hit_test(&marks, Point { x: 40.0, y: 40.0 }, 0.0), Some(1));
+        assert!(translate_annotation(
+            &mut marks[0],
+            Point {
+                x: 500.0,
+                y: -500.0
+            },
+            100,
+            80
+        )
+        .unwrap());
+        assert_eq!(
+            annotation_bounds(&marks[0]),
+            Some((Point { x: 80.0, y: 0.0 }, Point { x: 100.0, y: 20.0 }))
+        );
+        assert!(!translate_annotation(&mut marks[0], Point { x: 5.0, y: -5.0 }, 100, 80).unwrap());
+        assert!(translate_annotation(
+            &mut marks[0],
+            Point {
+                x: f32::NAN,
+                y: 0.0
+            },
+            100,
+            80
+        )
+        .is_err());
+    }
+    #[test]
+    fn every_annotation_can_be_selected_and_moved_as_a_single_shape() {
+        let box_rect = Rect {
+            x: 20,
+            y: 20,
+            width: 80,
+            height: 60,
+        };
+        let cases = vec![
+            (
+                Annotation::Arrow {
+                    from: Point { x: 20.0, y: 20.0 },
+                    to: Point { x: 100.0, y: 80.0 },
+                    width: 4.0,
+                    colour: [255; 4],
+                },
+                Point { x: 60.0, y: 50.0 },
+            ),
+            (
+                Annotation::Rectangle {
+                    rect: box_rect,
+                    width: 3,
+                    colour: [255; 4],
+                },
+                Point { x: 21.0, y: 21.0 },
+            ),
+            (
+                Annotation::Highlight {
+                    rect: box_rect,
+                    colour: [255; 4],
+                },
+                Point { x: 60.0, y: 50.0 },
+            ),
+            (
+                Annotation::Freehand {
+                    points: vec![Point { x: 20.0, y: 20.0 }, Point { x: 100.0, y: 80.0 }],
+                    width: 4.0,
+                    colour: [255; 4],
+                },
+                Point { x: 60.0, y: 50.0 },
+            ),
+            (
+                Annotation::Redact { rect: box_rect },
+                Point { x: 60.0, y: 50.0 },
+            ),
+            (
+                Annotation::Text {
+                    position: Point { x: 20.0, y: 20.0 },
+                    text: "Café\nNext".into(),
+                    font_size: 24.0,
+                    colour: [255; 4],
+                    background: None,
+                },
+                Point { x: 25.0, y: 25.0 },
+            ),
+            (
+                Annotation::Step {
+                    center: Point { x: 60.0, y: 50.0 },
+                    number: 1,
+                    radius: 20.0,
+                    colour: [0; 4],
+                    text_colour: [255; 4],
+                },
+                Point { x: 60.0, y: 50.0 },
+            ),
+        ];
+        for (mut annotation, point) in cases {
+            assert_eq!(
+                hit_test(std::slice::from_ref(&annotation), point, 0.0),
+                Some(0),
+                "{annotation:?}"
+            );
+            let (before_min, before_max) = annotation_bounds(&annotation).unwrap();
+            assert!(translate_annotation(
+                &mut annotation,
+                Point {
+                    x: 1_000.0,
+                    y: 1_000.0
+                },
+                200,
+                150
+            )
+            .unwrap());
+            let (min, max) = annotation_bounds(&annotation).unwrap();
+            assert!(min.x >= 0.0 && min.y >= 0.0 && max.x <= 200.001 && max.y <= 150.001);
+            assert!(((max.x - min.x) - (before_max.x - before_min.x)).abs() < 0.001);
+            assert!(((max.y - min.y) - (before_max.y - before_min.y)).abs() < 0.001);
+        }
+    }
+
+    #[test]
+    fn text_clips_at_canvas_edges_and_bounds_cover_every_painted_pixel() {
+        let mut doc = bare_document();
+        doc.source = RgbaImage::from_pixel(100, 80, Rgba([255; 4]));
+        for position in [
+            Point { x: 0.0, y: 0.0 },
+            Point { x: -15.0, y: -10.0 },
+            Point { x: 95.0, y: 70.0 },
+        ] {
+            let annotation = Annotation::Text {
+                position,
+                text: "Étiquettes\nΩ test".into(),
+                font_size: 24.0,
+                colour: [0, 0, 0, 255],
+                background: Some([100, 150, 200, 255]),
+            };
+            let (min, max) = annotation_bounds(&annotation).unwrap();
+            doc.annotations = vec![annotation];
+            let output = render(&doc).unwrap();
+            assert_ne!(output, doc.source);
+            for (x, y, pixel) in output.enumerate_pixels() {
+                if pixel != doc.source.get_pixel(x, y) {
+                    assert!(x as f32 >= min.x.floor() && (x as f32) < max.x.ceil());
+                    assert!(y as f32 >= min.y.floor() && (y as f32) < max.y.ceil());
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn text_and_steps_reject_invalid_sizes_and_movement_without_mutation() {
+        let mut doc = bare_document();
+        doc.source = RgbaImage::from_pixel(100, 80, Rgba([255; 4]));
+        for radius in [f32::NAN, f32::INFINITY, 0.0, 257.0] {
+            doc.annotations = vec![Annotation::Step {
+                center: Point { x: 20.0, y: 20.0 },
+                number: 1,
+                radius,
+                colour: [255; 4],
+                text_colour: [0; 4],
+            }];
+            assert!(render(&doc).is_err());
+        }
+        let mut oversized = Annotation::Text {
+            position: Point { x: 1.0, y: 1.0 },
+            text: "A very long label".into(),
+            font_size: 200.0,
+            colour: [255; 4],
+            background: None,
+        };
+        let before = oversized.clone();
+        assert!(translate_annotation(&mut oversized, Point { x: 1.0, y: 1.0 }, 100, 80).is_err());
+        assert_eq!(oversized, before);
+        doc.annotations = vec![Annotation::Text {
+            position: Point { x: 1.0, y: 1.0 },
+            text: "a\n".repeat(MAX_TEXT_LINES),
+            font_size: 24.0,
+            colour: [255; 4],
+            background: None,
+        }];
+        assert!(render(&doc).is_err());
     }
 }

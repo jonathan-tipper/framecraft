@@ -1,51 +1,38 @@
 # Product direction
 
-Version 0.2 centres the product on collecting screenshots during a meeting, demo, or presentation. The user chooses the shared-content area once and keeps working. Reviewing, naming, and annotation can happen afterwards.
+Framecraft tests a specific proposition: people collecting meeting, presentation or software-evidence frames can spend less effort capturing, finding and explaining them if collection and review share one local workflow. Version 0.3 adds enough of that workflow to test the proposition. It does not establish that Framecraft is faster or easier than existing tools.
 
-Version 0.1 began with a single-image editor. That remains useful, but reopening selection, editing, and save dialogs for every slide creates unnecessary interruption. Sessions separate collection from later editing.
+## Evidence and decisions
 
-## What this version delivers
+The [GitHub product brief](https://github.com/jonathan-tipper/framecraft/issues/1) is the backlog index and research record. Official product documentation was reviewed on 28 October 2026 for Apple Screenshot, CleanShot X, Shottr, Snagit, Loom, Screen Studio and Cap. These are benchmarks in different segments, not a defensible Mac market-share ranking. Vendor adoption claims are labelled as such in the brief. No competitor applications were benchmarked hands-on in that research.
 
-- A remembered display region, destination, and capture schedule for the active session.
-- Manual global capture, timed capture, or settled visual-change capture.
-- Immediate PNG persistence followed by optional local OCR naming.
-- A thumbnail list with rename and edit actions.
-- Highlights, ink, arrows, crop, redaction, and presentation styling.
-- Edited copies beside the source images, preserving the original captures.
+The useful patterns are rapid handoff after capture; recoverable local history; revisable annotations; explicit OCR copying; and selected, ordered explanatory output. Apple already provides familiar basic capture, so adding another capture button alone offers little reason to switch. Video and hosted sharing introduce a different cost and privacy commitment and are outside this version.
 
-Rust and MIT licensing support inspectability and development. They do not establish that Framecraft is faster or easier to use than an existing tool. The session workflow needs to earn that claim in actual use.
+## Delivery shape
 
-## Deliberate limits
-
-The selected area is fixed to screenshot coordinates, not attached to a meeting window. The app checks pixel dimensions, but it cannot detect an equal-sized display taking another display's index. Moving the shared content or rearranging displays requires stopping and selecting again.
-
-Change detection measures changed thumbnail pixels, not slide meaning. Tiny text edits can be missed; animations can postpone settling. A manual capture remains available in every running mode.
-
-Automatic names come from Apple Vision OCR and heading-selection rules. There is no local language model, semantic diagram understanding, or generated summary. Naming never delays saving the original image.
-
-## Next milestones
-
-| Milestone | Work | Evidence needed |
+| Outcome | 0.3 test-build scope | Evidence still needed |
 | --- | --- | --- |
-| Validate 0.2 on a Mac | Capture permissions, minimisation, global keys, multiple displays, OCR, stop/resume | Recorded manual tests on named macOS versions and hardware |
-| Improve source targeting | Direct ScreenCaptureKit adapter, stable display identities, optional window tracking | Repeatable Retina and display-reconfiguration tests |
-| Improve collection | Review change thresholds against real presentations, clearer skipped-name status, recovery from failures | Capture completeness, false-save rate, and recovery tests |
-| Improve review | Session reopening, editable projects, annotation selection, optional retained history | File round trips, retention behaviour, and usability tests |
-| Prepare distribution | Signed and notarised releases, update policy, dependency review | Installation on a separate Mac and documented release checks |
+| Capture intended content | Confirmed fixed display area; manual, timer and change modes; menu bar controls; clearer recovery | Native permission, minimisation, display and shortcut matrix, [#7](https://github.com/jonathan-tipper/framecraft/issues/7) |
+| Return and explain | Reopenable session metadata, original/edited variants, selection, text and steps | Reopen/recovery tests plus human correction and retrieval tasks |
+| Share deliberate output | Reviewed image copy/drag, local OCR preview, selected offline HTML/PNG pack | Native receiving-app tests and offline inspection on another Mac |
+| Establish user value | A working beta for the planned comparison tasks | Consented [pilot #9](https://github.com/jonathan-tipper/framecraft/issues/9), not synthetic claims |
 
-Recording, scrolling capture, and remote sharing remain outside this release. A direct `SCScreenshotManager` adapter would target macOS 14 or newer; macOS 13 support would need a retained fallback or a separate implementation.
+The [0.3 specification](specs/0.3-session-workbench.md) records implementation choices and boundaries. GitHub issues remain the work queue. Code completion alone does not satisfy native or human-study acceptance criteria.
 
-## Measurement targets
+## Boundaries
 
-These are targets, not measured results. Record release-build hardware, display scale, image dimensions, and capture mode when testing.
+A selected area is a rectangle in screenshot pixels, not a tracked window. Equal-sized display reordering is not detected. [Targeting research #8](https://github.com/jonathan-tipper/framecraft/issues/8) must resolve stable identity, window-following and compatibility before replacing the adapter. macOS 13 remains the baseline; setting a deployment target is not evidence of runtime compatibility on that release.
 
-| Measure | Initial target |
-| --- | --- |
-| Manual shortcut to durable PNG | Under 1 second after initial minimisation |
-| Thirty-slide test deck | Every deliberate manual capture present and correctly ordered |
-| Change mode on static slides | One saved image per settled slide, with measured misses and duplicates |
-| Capture under slow or failing OCR | No lost PNGs; timestamp fallback retained |
-| Editing a 3840 × 2160 frame | Responsive ink and under 1 second for a typical export |
-| Native privacy behaviour | No application network requests for capture, editing, or naming |
+Change detection counts changed thumbnail pixels, not slide meaning. [Evaluation #12](https://github.com/jonathan-tipper/framecraft/issues/12) measures misses, duplicates and transitional saves independently. A synthetic corpus can expose regressions, but it cannot prove meeting completeness.
 
-Compare against the tools users already use. Measure missed moments, correction effort, naming usefulness, and whether a user accidentally shares an unredacted original alongside an edited copy.
+Apple Vision supplies local OCR. Heading selection proposes filenames; full-text recognition supplies a user-reviewed transcript from rendered pixels. There is no generative naming, automatic summary, searchable OCR archive or transcript sidecar.
+
+Sessions retain original and edited PNGs plus bounded metadata. Editable-project persistence, batch styling, pinning, pixel rulers, video/audio, webcam composition, hosted links, accounts and billing are not part of 0.3. [Scrolling capture #18](https://github.com/jonathan-tipper/framecraft/issues/18) remains demand-led discovery after the pilot, with no shipping scrolling feature promised.
+
+## Measurement and release claims
+
+The following remain targets rather than measured results: under 1 second from manual shortcut to durable PNG after initial minimisation; under 1 second for a typical 4K export; and complete, correctly ordered deliberate captures. Record hardware, macOS, display scale, fixture size, mode and failures with timings. Do not revise targets silently to fit results.
+
+The pilot compares task completion, missed/duplicate captures, correction work, retrieval and handoff effort against each participant's current tool. Its pre-registered provisional criteria include at least 80% unaided completion, no original-content disclosure, and a median improvement of at least 20% in the chosen primary measure without worse completeness. These are study criteria, not product claims. A small directional study does not establish population-wide usability.
+
+A wrong-source capture or accidental original disclosure blocks a release claim regardless of speed. Keep those failures visible in [test notes](TEST-NOTES.md), issue acceptance evidence and [release notes](RELEASE-NOTES-0.3.md). The current distribution aim is an inspectable, ad-hoc signed test build and a reviewable pull request. Developer ID signing, notarisation and a separate-Mac installation check are later distribution gates.

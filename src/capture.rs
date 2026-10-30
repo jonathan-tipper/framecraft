@@ -6,6 +6,140 @@
 //! `objc2-screen-capture-kit` without changing the editor's image contract.
 
 use image::RgbaImage;
+use std::{path::Path, time::Duration};
+
+/// Interactive selection remains user-controlled. Repeated unattended captures
+/// must finish or be terminated before another sample can start.
+pub const CAPTURE_DEADLINE: Duration = Duration::from_secs(10);
+
+type VisibilityHandler = std::sync::Arc<dyn Fn(bool) -> Result<(), String> + Send + Sync>;
+static VISIBILITY_HANDLER: std::sync::Mutex<Option<VisibilityHandler>> =
+    std::sync::Mutex::new(None);
+
+/// Desktop UI registers an acknowledged, main-thread hide/show operation.
+/// The worker fails closed if controls cannot be hidden before capture.
+pub fn set_visibility_handler(handler: Option<VisibilityHandler>) {
+    if let Ok(mut current) = VISIBILITY_HANDLER.lock() {
+        *current = handler;
+    }
+}
+
+struct HiddenControls(Option<VisibilityHandler>);
+impl HiddenControls {
+    fn acquire() -> Result<Self, String> {
+        let handler = VISIBILITY_HANDLER
+            .lock()
+            .map_err(|_| "Capture controls lock failed.")?
+            .clone();
+        if let Some(handler) = &handler {
+            if let Err(error) = handler(true) {
+                // A delayed UI acknowledgement can arrive after the timeout.
+                // Queue restoration so an abandoned capture cannot hide the
+                // status item for the rest of the session.
+                let _ = handler(false);
+                return Err(error);
+            }
+            // Allow the status-item removal to reach the compositor.
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        Ok(Self(handler))
+    }
+}
+impl Drop for HiddenControls {
+    fn drop(&mut self) {
+        if let Some(handler) = &self.0 {
+            let _ = handler(false);
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PermissionStatus {
+    Granted,
+    /// The preflight API cannot distinguish never asked from a denied request.
+    NotGranted,
+    Unknown,
+}
+
+pub fn permission_status() -> PermissionStatus {
+    #[cfg(target_os = "macos")]
+    {
+        #[link(name = "CoreGraphics", kind = "framework")]
+        unsafe extern "C" {
+            fn CGPreflightScreenCaptureAccess() -> bool;
+        }
+        // The read-only preflight does not request permission or capture pixels.
+        if unsafe { CGPreflightScreenCaptureAccess() } {
+            PermissionStatus::Granted
+        } else {
+            PermissionStatus::NotGranted
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    PermissionStatus::Unknown
+}
+
+pub fn permission_guidance(status: PermissionStatus) -> &'static str {
+    match status {
+        PermissionStatus::Granted => "Screen recording permission is granted. If capture fails, select an available source and retry.",
+        PermissionStatus::NotGranted => "Screen recording access is not granted. Open System Settings > Privacy & Security > Screen & System Audio Recording (Screen Recording on older macOS), allow Framecraft, then quit and reopen it. A development build may appear as Terminal or your IDE. Retry explicitly after fixing access.",
+        PermissionStatus::Unknown => "Framecraft could not determine screen recording permission. Check System Settings > Privacy & Security > Screen Recording, then retry explicitly.",
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DestinationFailureKind {
+    Missing,
+    NotDirectory,
+    PermissionDenied,
+    Full,
+    Other,
+}
+
+#[derive(Debug)]
+pub struct DestinationFailure {
+    pub kind: DestinationFailureKind,
+    pub message: String,
+}
+
+impl std::fmt::Display for DestinationFailure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.message)
+    }
+}
+
+/// Probe with a uniquely-created temporary file; existing captures are never
+/// opened or overwritten. This is a point-in-time check, not a disk-space promise.
+pub fn probe_destination(path: &Path) -> Result<(), DestinationFailure> {
+    use std::io::Write;
+    let map = |error: std::io::Error| {
+        let (kind, message) = match error.kind() {
+            std::io::ErrorKind::NotFound => (DestinationFailureKind::Missing, "The destination no longer exists. Choose a folder."),
+            std::io::ErrorKind::PermissionDenied => (DestinationFailureKind::PermissionDenied, "Framecraft cannot write to this folder. Choose another folder or fix its access permissions."),
+            std::io::ErrorKind::StorageFull => (DestinationFailureKind::Full, "The destination is full. Free space or choose another folder, then retry."),
+            _ => (DestinationFailureKind::Other, "The destination could not be checked. Choose another folder or retry after fixing storage."),
+        };
+        DestinationFailure {
+            kind,
+            message: format!("{message} ({error})"),
+        }
+    };
+    if !std::fs::metadata(path).map_err(map)?.is_dir() {
+        return Err(DestinationFailure {
+            kind: DestinationFailureKind::NotDirectory,
+            message: "The destination is not a folder. Choose a folder.".into(),
+        });
+    }
+    let mut probe = tempfile::Builder::new()
+        .prefix(".framecraft-write-check-")
+        .tempfile_in(path)
+        .map_err(map)?;
+    probe
+        .write_all(b"Framecraft destination check\n")
+        .map_err(map)?;
+    probe.as_file().sync_all().map_err(map)?;
+    probe.close().map_err(map)
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CaptureMode {
@@ -44,22 +178,34 @@ fn command_args(mode: CaptureMode) -> Vec<&'static str> {
 
 #[cfg(target_os = "macos")]
 fn capture_macos(mode: CaptureMode) -> Result<Option<RgbaImage>, String> {
-    run_capture(mode, &command_args(mode))
+    run_capture(mode, &command_args(mode), &|| false)
 }
 
 /// Snapshot one display without opening a picker. The index is macOS's -D index.
 pub fn capture_display(display: u32) -> Result<RgbaImage, String> {
+    capture_display_cancellable(display, &|| false)
+}
+
+pub fn capture_display_cancellable(
+    display: u32,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<RgbaImage, String> {
     if !(1..=16).contains(&display) {
         return Err("Choose a display number from 1 to 16.".into());
     }
     #[cfg(target_os = "macos")]
     {
         let index = display.to_string();
-        run_capture(CaptureMode::Screen, &["-x", "-t", "png", "-D", &index])?
-            .ok_or_else(|| "The display did not produce a screenshot.".into())
+        run_capture(
+            CaptureMode::Screen,
+            &["-x", "-t", "png", "-D", &index],
+            cancelled,
+        )?
+        .ok_or_else(|| "The display did not produce a screenshot.".into())
     }
     #[cfg(not(target_os = "macos"))]
     {
+        let _ = cancelled;
         Err("Display capture requires macOS.".into())
     }
 }
@@ -75,6 +221,10 @@ pub struct CaptureTarget {
 impl CaptureTarget {
     pub fn capture(&self) -> Result<RgbaImage, String> {
         self.crop(&capture_display(self.display)?)
+    }
+
+    pub fn capture_cancellable(&self, cancelled: &dyn Fn() -> bool) -> Result<RgbaImage, String> {
+        self.crop(&capture_display_cancellable(self.display, cancelled)?)
     }
 
     pub fn crop(&self, image: &RgbaImage) -> Result<RgbaImage, String> {
@@ -97,11 +247,17 @@ impl CaptureTarget {
 }
 
 #[cfg(target_os = "macos")]
-fn run_capture(mode: CaptureMode, args: &[&str]) -> Result<Option<RgbaImage>, String> {
+fn run_capture(
+    mode: CaptureMode,
+    args: &[&str],
+    cancelled: &dyn Fn() -> bool,
+) -> Result<Option<RgbaImage>, String> {
     use std::fs;
     use std::io::ErrorKind;
     use std::os::unix::fs::PermissionsExt;
     use std::process::{Command, Stdio};
+
+    let _hidden = HiddenControls::acquire()?;
 
     // tempfile creates a private directory; explicitly preserve its 0700 mode.
     // RAII removes both the capture and the directory on success, cancellation,
@@ -114,25 +270,38 @@ fn run_capture(mode: CaptureMode, args: &[&str]) -> Result<Option<RgbaImage>, St
         .map_err(|e| format!("Could not protect private capture storage: {e}"))?;
     let path = temporary.path().join("capture.png");
 
-    let output = Command::new("/usr/sbin/screencapture")
+    // A private file avoids blocking on a full stderr pipe. Diagnostics are
+    // bounded when read and removed alongside the temporary screenshot.
+    let diagnostic_path = temporary.path().join("diagnostic.txt");
+    let diagnostic_file = fs::File::create(&diagnostic_path).map_err(|e| e.to_string())?;
+    let mut child = Command::new("/usr/sbin/screencapture")
         .args(args)
         .arg(&path)
         .env("LC_ALL", "C")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .output()
+        .stderr(Stdio::from(diagnostic_file))
+        .spawn()
         .map_err(|e| {
             format!("Could not start macOS screen capture: {e}. Check that /usr/sbin/screencapture is available.")
         })?;
+    let deadline = (mode == CaptureMode::Screen).then_some(CAPTURE_DEADLINE);
+    let status = wait_for_capture(&mut child, deadline, cancelled)?;
 
     let file_exists = match fs::metadata(&path) {
         Ok(metadata) => metadata.is_file(),
         Err(error) if error.kind() == ErrorKind::NotFound => false,
         Err(error) => return Err(format!("Could not inspect the captured image: {error}")),
     };
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    if !classify_completion(mode, output.status.success(), file_exists, &stderr)? {
+    use std::io::Read;
+    let mut diagnostic = Vec::new();
+    fs::File::open(diagnostic_path)
+        .map_err(|e| e.to_string())?
+        .take(4096)
+        .read_to_end(&mut diagnostic)
+        .map_err(|e| e.to_string())?;
+    let stderr = String::from_utf8_lossy(&diagnostic);
+    if !classify_completion(mode, status.success(), file_exists, &stderr)? {
         return Ok(None);
     }
 
@@ -141,6 +310,38 @@ fn run_capture(mode: CaptureMode, args: &[&str]) -> Result<Option<RgbaImage>, St
     crate::editor::load_image(&path)
         .map(Some)
         .map_err(|e| format!("macOS captured an image, but Framecraft could not open it: {e}"))
+}
+
+#[cfg(target_os = "macos")]
+fn wait_for_capture(
+    child: &mut std::process::Child,
+    deadline: Option<Duration>,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<std::process::ExitStatus, String> {
+    let started = std::time::Instant::now();
+    loop {
+        let reason = if cancelled() {
+            Some("Capture cancelled because the session changed.")
+        } else if deadline.is_some_and(|limit| started.elapsed() >= limit) {
+            Some("Screen capture timed out. Session paused; check the source and permissions, then retry.")
+        } else {
+            None
+        };
+        if let Some(reason) = reason {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(reason.into());
+        }
+        match child.try_wait() {
+            Ok(Some(status)) => return Ok(status),
+            Ok(None) => std::thread::sleep(Duration::from_millis(25)),
+            Err(error) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!("Could not check screen capture: {error}"));
+            }
+        }
+    }
 }
 
 #[cfg(any(target_os = "macos", test))]
@@ -277,5 +478,37 @@ mod tests {
     #[test]
     fn failed_process_with_partial_file_is_error() {
         assert!(classify_completion(CaptureMode::Area, false, true, "capture failed").is_err());
+    }
+
+    #[test]
+    fn destination_probe_leaves_no_files_and_rejects_a_file() {
+        let temporary = tempfile::tempdir().unwrap();
+        super::probe_destination(temporary.path()).unwrap();
+        assert_eq!(std::fs::read_dir(temporary.path()).unwrap().count(), 0);
+        let file = temporary.path().join("existing.png");
+        std::fs::write(&file, b"keep me").unwrap();
+        assert!(super::probe_destination(&file).is_err());
+        assert_eq!(std::fs::read(&file).unwrap(), b"keep me");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn unattended_process_has_deadline_and_cancellation_without_screen_capture() {
+        use std::process::Command;
+        use std::time::{Duration, Instant};
+        let mut child = Command::new("/bin/sleep").arg("5").spawn().unwrap();
+        let began = Instant::now();
+        assert!(
+            super::wait_for_capture(&mut child, Some(Duration::from_millis(30)), &|| false)
+                .unwrap_err()
+                .contains("timed out")
+        );
+        assert!(began.elapsed() < Duration::from_secs(1));
+        assert!(child.try_wait().unwrap().is_some());
+        let mut child = Command::new("/bin/sleep").arg("5").spawn().unwrap();
+        assert!(super::wait_for_capture(&mut child, None, &|| true)
+            .unwrap_err()
+            .contains("cancelled"));
+        assert!(child.try_wait().unwrap().is_some());
     }
 }

@@ -1,65 +1,68 @@
-# Architecture: version 0.2
+# Architecture: 0.3 test build
 
-Framecraft is a Rust desktop application with a GPU-rendered egui interface. The default page is **Session**; the single-image **Editor** remains available. System capture and optional Apple Vision OCR sit behind Rust adapters. No Cap code is reused.
+Framecraft is a Rust desktop application with an egui/eframe GPU-rendered interface. Rust adapters call macOS capture, Apple Vision OCR and native desktop controls. There is no webview, account service or application cloud endpoint. The [0.3 specification](specs/0.3-session-workbench.md) defines intended behaviour; [test notes](TEST-NOTES.md) record verification.
 
 ## Components
 
-| File | Responsibility |
+| Module | Responsibility |
 | --- | --- |
-| `app.rs` | Application pages, display-selection snapshot, editor, file/clipboard actions, edited-copy export |
-| `session_ui.rs` | Session setup, thumbnail list, rename/edit actions, focus-driven pause, native global shortcuts |
-| `session_runner.rs` | Capture worker, scheduling, pause/resume/stop state, limits, separate bounded naming worker |
-| `session.rs` | Session folders, atomic PNG persistence, safe filenames, rename, thumbnail change detection |
-| `capture.rs` | System screenshot invocation, numbered-display capture, saved target geometry and crop validation |
-| `naming.rs` | Apple Vision text recognition and deterministic heading ranking |
-| `editor.rs` | Source-coordinate annotations, validation, crop, compositing, flattened output |
+| `app.rs` | Pages, document revision, selection/editing, unsaved-change decisions, background rendering/OCR, output review |
+| `session_ui.rs` | Session setup, reopen/import preview, review rows, variant choice and session commands |
+| `session_runner.rs` | Capture scheduling, generations, pause/resume/stop, limits and bounded heading-naming queue |
+| `session.rs` | Atomic PNG storage, safe filenames, per-capture synchronisation and change detection |
+| `library.rs` | Versioned manifests, stable capture IDs, file inspection, confirmation/recovery, folder locking and recents |
+| `capture.rs` | Bounded system screenshot process, display geometry checks, cropping and capture-control visibility |
+| `desktop.rs`, `settings.rs` | Main-thread menu bar/global shortcuts and local preferences |
+| `naming.rs` | Apple Vision observations, separate heading ranking and full-text reading order |
+| `editor.rs` | Source-coordinate annotations, glyph rasterisation, validation, crop/style composition and flattened pixels |
+| `output.rs` | Resolved pixel snapshots, neutral drag PNGs and staged offline packs |
 
-## Selecting and collecting
+## Capture and scheduling
 
-Selecting a session source hides the app briefly and captures the chosen display using `screencapture -D`. The snapshot opens in the editor's crop tool. Confirming the crop records the display index, physical-pixel rectangle, and source image dimensions. Confirming without a crop selects the entire display.
+Source selection captures a numbered display using `/usr/sbin/screencapture -D`, then records a physical-pixel rectangle and expected display dimensions. Each sample captures the selected display to a private temporary directory, decodes it, checks dimensions and crops before session persistence or naming. Cleanup is best effort. This adapter is not operating-system region-only capture and does not follow windows.
 
-Each later sample captures that display again. The adapter checks dimensions and crops before the image reaches the session store or naming worker. A size mismatch pauses the session. Display indices are not stable identities: an equal-sized monitor replacing another index is not detected. There is no window following.
+Display numbers are not stable identities. Dimension changes fail explicitly; equal-sized display swaps are not detected. A direct ScreenCaptureKit replacement requires a separate decision under [#8](https://github.com/jonathan-tipper/framecraft/issues/8).
 
-The current capture adapter writes a full-display screenshot into a private temporary directory, then decodes and crops it. Temporary cleanup is best effort. This is not an operating-system region-only capture implementation or a secure-erasure guarantee.
+The runner owns running, paused and stopped state. Generation counters invalidate stale requests/results across pause/resume/stop. An atomic persistence operation already underway may complete. Manual requests are bounded and tagged with the current generation. Interval scheduling includes processing time. Change mode samples roughly once per second and measures a 128 × 72 greyscale fingerprint, an intensity threshold, changed-area fraction, settling period and cooldown. The saved baseline advances only after persistence; resume resets it.
 
-## Scheduling and UI control
+Main-thread native controls and in-window actions use the same runner commands. Successful start/resume minimises the window; focus return pauses capture. Unattended capture has a deadline; interactive selection remains user-cancellable. Source changes and shortcut replacement are blocked while a session is active. The menu bar item attempts to hide around capture, with an acknowledgement boundary rather than an unverified timing-only assumption.
 
-The worker uses explicit running, paused, and stopped states, with a generation counter to invalidate old work even across a rapid pause/resume. Manual requests use a bounded command queue and retain their generation. Pause and Stop discard stale requests and captured pixels; an atomic persistence operation already begun is allowed to finish. Interval mode schedules the next sample after the previous capture work; configured intervals therefore do not guarantee an exact wall-clock cadence.
+## Durable sessions
 
-Change mode samples about once per second. It compares 128 × 72 greyscale fingerprints, counts pixels whose intensity changes by at least 16/255, and applies an adjustable changed-area threshold, settling period, and cooldown. The saved baseline advances only after persistence succeeds. Resume resets the detector and its baseline, so the last stable frame may be saved again after settling. It measures visual change, not semantic slide identity.
+Original PNGs are encoded into a same-directory temporary file, synced and persisted without clobbering existing captures. A successful PNG save is independent of later naming or metadata success. Metadata failure retains the acknowledged image and reports recovery guidance.
 
-Successful Start and Resume minimise the app and allow a short settling delay before capture. Returning focus to Framecraft pauses the session. Global `Cmd+Option+S/P/X` shortcuts are registered on the main thread during an active session and polled with a 100 ms UI wake interval. Registration failure leaves the session paused with an error; Resume retries registration. Stop releases those registrations. Source selection and settings remain disabled while a session is active, including while paused.
+`framecraft-session.json` uses schema version 1. It stores session/capture identity, titles, sequence/timestamps, relative image filenames, lengths and fingerprints. Fingerprints detect accidental external changes; they are not an authenticity or tamper-resistance guarantee. Manifests contain no editable annotation layers or OCR transcripts. A per-folder file lock prevents concurrent writers; atomic metadata replacement and directory sync bound interruption behaviour.
 
-The default limits are 500 images or 120 minutes since session start, including paused time. Capture or save errors pause the worker. These interactions need native runtime verification, especially while the app is minimised.
+Opening first inspects a bounded folder/manifest and generates a preview. Legacy import, orphan recovery, malformed metadata recovery and external relinking require confirmation. Unknown schema versions fail without migration. Invalid metadata is backed up before confirmed replacement. External replacement PNGs are copied into the session; traversal paths and symbolic-link image imports are rejected. Limits include a 4 MiB manifest, 10,000 captures, 20,000 inspected folder entries and 512 MiB per image file, followed by decoder pixel bounds.
 
-## Persistence and naming
+Recent-session references live under Application Support and are capped at 12. Capture defaults and a source hint are saved separately from shortcut preferences; restoring them never restores an executable capture target, which requires confirmation again. Forgetting a reference does not remove source data. Session opening is review-only; it cannot restart capture. Review order and pack drafts are not an editable-project format.
 
-The store creates a dated session directory without reusing an existing one. PNGs are encoded to a temporary file in that directory, synced, and persisted without clobbering an existing capture. Names contain a UTC timestamp and sequence. Rename preserves those fields, sanitises the title, and resolves collisions within the same directory.
+`CaptureHandle` serialises each capture's manual rename, OCR rename and image loading. Manual names win over pending results. Background loading resolves the current file under the same per-capture lock. Distinct captures retain independent locks.
 
-A shared `CaptureHandle` serialises naming and image loading for each capture. Successful manual renames are authoritative: pending or stale OCR results cannot replace them, including when the user explicitly keeps the existing title. Background editor loading resolves and decodes the current path under the same per-capture lock, so an OCR rename cannot remove the file between path lookup and opening. Other captures use independent locks.
+## Image and annotation model
 
-After saving, the capture worker publishes a thumbnail and optionally submits a bounded image to a separate OCR worker. The naming queue holds four pending jobs. A full queue skips the name suggestion, not the image save. OCR failure or missing meaningful text retains the fallback filename.
+`Document` owns an RGBA8 source image, optional source-coordinate crop, annotations and presentation style. Sources/outputs are bounded to 16,384 pixels per axis and 64 million pixels. Input PNG/JPEG orientation is applied; source metadata is discarded. ICC profiles are not colour-transformed, so colour-managed wide-gamut/HDR fidelity is outside the current contract.
 
-Apple Vision runs on the naming worker through Rust Objective-C bindings. Heading selection considers recognised text and its geometry. There is no language-model inference, cloud endpoint, or application model download. OCR text is bounded in memory and is not stored as a sidecar. Apple Vision itself is a proprietary macOS framework.
+The compositor draws arrows, rectangles, highlights, ink, text and steps; applies opaque redactions last; then crops and adds presentation styling. Preview, current-output export and OCR consume this shared rendered result. No export layer refers back to hidden source pixels. Redaction does not destroy in-memory source/undo data or retained original PNGs.
 
-## Editing and export
+Text uses embedded Hack through `ab_glyph`. Layout is deterministic Unicode-scalar layout with explicit newlines and `?` fallback for missing glyphs, without wrapping or script shaping. Annotation bounds, arrow segments and rasterisation share geometry. Hit-testing follows visible order, with redactions first; index selection exposes obscured marks. Translation clamps a complete shape instead of distorting vertices. The UI groups user gestures into undo actions and tracks document revisions for stale-result rejection.
 
-Annotations use source-image coordinates independently of canvas zoom. Highlight rectangles use source-over alpha. Freehand strokes share the segment rasteriser with arrows and union stroke coverage so joins do not repeatedly apply alpha. Freehand input is limited to 10,000 finite, bounded points and widths of at most 512 pixels.
+## OCR boundaries
 
-Redactions are applied last as opaque replacement before crop and styling. The flattened edited PNG contains no editable layers. The source image and undo state still exist in memory, and the session's unedited PNG remains on disk. **Save edited copy** adds a uniquely named PNG beside that original; it does not sanitise the original or the whole session directory.
+Heading naming runs after original persistence on a separate bounded queue. It reduces input to 2,048 pixels per axis and ranks confident, meaningful heading candidates; failure leaves the fallback filename intact.
 
-The editor and CLI use the same compositor. Imported images become RGBA8; source colour profiles are discarded without colour conversion. HDR and wide-gamut fidelity are not implemented.
+Full-text recognition is separate: it consumes current flattened pixels, reduces input to 4,096 pixels per axis, retains numbers/URLs/footer/interface text and orders approximate rows top-to-bottom, then left-to-right. The OCR working buffer composites alpha onto opaque white so hidden RGB channels cannot contribute. It samples at most 4,096 evenly spaced pixels and inverts RGB when at least 60% have integer luminance `(54R + 183G + 19B) / 256` below 96. This one-pass contrast heuristic addresses a reproduced dark-interface failure; it changes neither source/export pixels nor redaction/crop boundaries and does not guarantee accuracy on every layout. It rejects results beyond 512 observations or 32,768 Unicode characters. An empty result is distinct from failure. macOS Vision objects are created and released on the worker; no image file, network service or retained transcript is used.
 
-## Future capture adapter and release
+The UI owns cancellation, current-revision checks and explicit Copy after preview. Cancellation invalidates a result; it does not promise immediate interruption of Apple's synchronous recognition call. Complex tables/columns need human review, and installed Vision controls language support.
 
-A direct Rust `objc2` ScreenCaptureKit adapter would remove the command-line capture boundary and enable more precise source handling. `SCScreenshotManager` implies macOS 14 or newer; the current deployment target is macOS 13. Stable display identity, window targeting, mixed Retina scales, permission changes, and system-picker behaviour need explicit tests.
+## Output and publication
 
-The bundle identifier is `dev.framecraft.app`. The local bundle script uses ad-hoc signing. Developer ID signing, notarisation, updates, and installation on a separate Mac remain release work. CI checks cannot validate a live meeting capture session.
+A `Snapshot` contains the resolved RGBA pixels for one output. **Original** and **Saved edited** variants decode the selected file unchanged; **Current edits** renders the current document once. Missing edited output fails without falling back to the original. Saved flattened files do not receive presentation styling again automatically.
 
-## References
+Native file drag uses a neutral `frame-0001.png` in a private temporary directory retained until application exit. Clipboard, recipient storage and temporary cleanup have their own platform lifetimes. Finder reveal targets a saved file, not unsaved document state.
 
-- [Cap product](https://cap.so/) and [repository licence](https://github.com/CapSoftware/Cap/blob/main/LICENSE)
-- [egui/eframe](https://github.com/emilk/egui)
-- [Apple SCScreenshotManager](https://developer.apple.com/documentation/screencapturekit/scscreenshotmanager)
-- [Apple VNRecognizeTextRequest](https://developer.apple.com/documentation/vision/vnrecognizetextrequest)
-- [objc2](https://github.com/madsmtm/objc2)
+A pack freezes selected snapshots, order, explicit captions and variant labels before export. It emits only `index.html` and neutral sequential PNGs. HTML escapes user text and references local assets; it includes no scripts, source paths or automatic OCR-derived titles. The 100-frame/64-million-total-pixel limits bound work. Export canonicalises destinations, rejects the source folder and descendants, stages and syncs every output, then publishes using an exclusive native directory rename. Existing destinations are not overwritten. Cancellation/failure before publication leaves no completed pack.
+
+## Release boundaries
+
+The target is a local, ad-hoc signed macOS test bundle. Platform deployment flags are not native evidence. Permission behaviour, multiple display arrangements, menu hiding, minimised shortcuts, external drag recipients, VoiceOver and another-Mac offline packs remain explicit [test gates](TESTING.md). No performance or user-benefit claim follows merely from unit tests or a synthetic OCR pass.

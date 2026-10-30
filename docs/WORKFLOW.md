@@ -1,43 +1,40 @@
-# A capture session, from setup to sharing
+# Worked example: project review to evidence pack
 
-Example: collect slides during a project review, while leaving participant tiles and meeting chat out of the saved region.
+Use a synthetic slide deck and a disposable folder for this exercise. It tests the complete workflow without requiring real meeting content.
 
-1. Open **Session**. Enter `Project review`, choose a destination such as `~/Pictures/Framecraft`, and choose the display showing the shared content.
-2. Click **Select shared area**. In the display snapshot, use **Crop** to mark the slides, then click **Use this area**. This fixes a rectangle in screenshot pixels. Keep the meeting window and shared content in that position.
-3. Choose **On shortcut** for deliberate captures, **On a timer** for regular samples, or **When content changes** for settled visual changes. Leave local OCR naming enabled if headings are useful.
-4. Press **Start session**. The app minimises. Use `Cmd+Option+S` to save a frame without another selector or save dialog. This manual capture also works in timer and change modes.
-5. Use `Cmd+Option+P` to pause or resume and `Cmd+Option+X` to stop. Opening Framecraft pauses capture for review. Resume minimises it again.
-6. In **Collected frames**, correct a title and click **Rename**, or choose **Edit**. Highlight, draw, crop, or redact, then press **Save edited copy** or `Cmd+S`.
+1. In **Session → New capture session**, enter `Project review`, choose `~/Pictures/Framecraft`, and select the display showing the deck.
+2. Choose **Select shared area**, crop around the slide content and confirm **Use this area**. Leave presenter notes and participant tiles outside the rectangle. Keep the content in that position.
+3. Choose **On shortcut**, keep optional local heading naming enabled, and start. Framecraft minimises. Capture 3 distinct slides with `Cmd+Option+S` or the menu bar's **Capture now**.
+4. Return to Framecraft to pause, then stop. Confirm all 3 originals are present. Rename one to `Delivery milestones` and check that a later OCR result does not replace your choice.
+5. Edit the second frame. Add a text label, a numbered step and a redaction over a synthetic secret. Select and move a mark, then undo/redo. Inspect **Export preview** and save an edited copy.
+6. Quit and reopen Framecraft. Use **Recent sessions** or **Open session…** to open the folder. Opening must not resume capture. The saved edited image is flattened; its earlier text and redaction objects are no longer editable.
+7. Choose **Saved edited** for the second frame and **Original** deliberately for the others. Select only the first and second frames, reorder them and enter neutral captions.
+8. Choose **Review share pack…**. Confirm 2 images plus `index.html`, check the redaction and captions, then export into a new folder outside the session.
+9. Open the pack's `index.html` offline. Check that both PNGs resolve and that the third, unselected frame is absent. Share this output folder, not the source session.
 
-Illustrative paths, with UTC timestamps:
-
-```text
-~/Pictures/Framecraft/20261019-090000-project-review/
-  20261019-090112-0001-manual-capture.png
-```
-
-The PNG is already saved at this point. If OCR later finds `Delivery milestones`, the same capture can become:
+Illustrative source layout, with UTC timestamps:
 
 ```text
-20261019-090112-0001-delivery-milestones.png
+~/Pictures/Framecraft/20261028-090000-project-review/
+  framecraft-session.json
+  .framecraft-session.lock
+  20261028-090112-0001-manual-capture.png
+  20261028-090130-0002-delivery-milestones.png
+  20261028-090130-0002-delivery-milestones-edited-01.png
+  20261028-090155-0003-operating-plan.png
 ```
 
-An edited export is another file in that folder:
+Illustrative output layout:
 
 ```text
-20261019-090112-0001-delivery-milestones-edited-01.png
+~/Desktop/Project-review-pack/
+  index.html
+  frame-0001.png
+  frame-0002.png
 ```
 
-These names are examples, not files included with the application. Timestamp and sequence stay intact during renaming. A collision receives a suffix rather than replacing an existing image.
+The source folder preserves originals. The output uses neutral names and contains only selected flattened pixels and text you entered. A saved edited PNG is not styled again merely because you selected it for handoff.
 
-## Things to account for
+For a one-image handoff, select the intended variant and choose **Copy image** or **Prepare drag**. Keep Framecraft open until a native drag recipient has imported the PNG. For text extraction, open the frame in the Editor, choose **Copy text…**, review the current rendered result and explicitly copy it. OCR is not automatically copied into pack captions.
 
-- **Moving content:** the region does not follow a window. Stop and reselect after moving or resizing the meeting content. A display-size change pauses capture, but an equal-sized display taking another index is not detected.
-- **Change mode:** the detector recognises pixel changes, not slide meaning. Animations can keep it unsettled, and small changes can fall below the threshold. Use the manual shortcut for a frame you particularly need.
-- **Timing:** sampling and OCR are asynchronous. The settling control is evaluated on sample ticks, not a precise subsecond trigger.
-- **Pausing and resuming:** Resume resets change detection, so the last stable frame can appear again. Pause or Stop discards in-flight captures unless atomic file persistence has already begun; that save can finish. A shortcut-registration conflict leaves the session paused until it can be resolved and registration retried.
-- **Naming:** diagrams, sparse text, failed OCR, or a busy naming queue can keep fallback names. The PNG is still saved. A manual rename takes priority over pending OCR, and opening a frame for editing is synchronised with background filename changes. OCR text is not retained as a sidecar.
-- **Stopping:** the default stop limit is 120 elapsed minutes, including pauses, or 500 images. Stopping retains saved files. To change the source region or session settings, stop first.
-- **Redaction:** edited copies contain flattened redactions, but the unredacted originals remain beside them. Share the intended edited files, rather than the whole session folder.
-
-Session setup and the thumbnail list are currently in-memory application state. Saved PNGs survive quitting; automatic session reopening and editable project files are not implemented. You can reopen a PNG through the editor.
+If you encounter a missing file, permission failure or metadata warning, follow the [recovery guide](USER-GUIDE.md#reopen-import-and-recover). Record the actual failure and build details in the [test checklist](TESTING.md); this example is an expected flow, not evidence that native checks have passed.

@@ -1,6 +1,6 @@
 [package]
 name = "framecraft"
-version = "0.2.0"
+version = "0.3.0-beta.1"
 edition = "2021"
 description = "A local-first, all-Rust screenshot workbench for macOS"
 license = "MIT"
@@ -8,19 +8,26 @@ publish = false
 
 [features]
 default = ["ui"]
-ui = ["dep:eframe", "dep:rfd", "dep:arboard", "dep:global-hotkey"]
+ui = ["dep:eframe", "dep:rfd", "dep:arboard", "dep:global-hotkey", "dep:tray-icon", "dep:raw-window-handle", "dep:objc2-app-kit"]
 
 [dependencies]
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 tempfile = "3"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+ab_glyph = "0.2"
+epaint_default_fonts = "=0.31.1"
 eframe = { version = "=0.31.1", optional = true, default-features = false, features = ["default_fonts", "wgpu", "x11", "wayland", "accesskit"] }
 rfd = { version = "0.15", optional = true }
 arboard = { version = "3", optional = true }
+raw-window-handle = { version = "0.6", optional = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 global-hotkey = { version = "0.8", optional = true }
+tray-icon = { version = "0.25", optional = true, default-features = false }
+objc2-app-kit = { version = "0.3.2", optional = true, default-features = false, features = ["std", "NSApplication", "NSResponder", "NSView", "NSWindow", "NSEvent", "NSDragging", "NSDraggingSession", "NSDraggingItem", "NSPasteboard", "NSImage"] }
 objc2 = "0.6"
-objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSArray", "NSData", "NSDictionary", "NSError", "NSObject", "NSString"] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSArray", "NSData", "NSDictionary", "NSError", "NSObject", "NSString", "NSURL", "NSGeometry"] }
 objc2-vision = { version = "0.3.2", default-features = false, features = ["std", "VNRequest", "VNRequestHandler", "VNRecognizeTextRequest", "VNObservation", "VNTypes", "objc2-core-foundation"] }
 
 [profile.release]

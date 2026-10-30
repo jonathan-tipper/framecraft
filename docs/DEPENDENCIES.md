@@ -1,6 +1,17 @@
 # Declared dependency licences
 
-Generated from `cargo metadata --locked --format-version 1` for Framecraft 0.2. Includes resolved packages for other platforms and optional features; not every listed package is compiled on macOS. Licences are upstream declarations, not a source audit. `Cargo.lock` records exact resolved versions. Apple system frameworks, including Vision, are platform components and are not covered by these crate licences.
+Generated from `cargo metadata --locked --offline --format-version 1` for Framecraft
+0.3.0-beta.1. This includes resolved packages for other platforms and optional
+features; not every listed package is compiled into the macOS application.
+`Cargo.lock` records exact resolved versions. Declarations are upstream metadata,
+not a manual source audit or a complete binary attribution report.
+
+Direct additions for this beta include JSON/serde session metadata, deterministic
+font rasterisation and native desktop/handoff controls. Review the manifest and
+lockfile together when changing dependencies. Embedded-font licence notices are
+included in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) and should accompany
+redistributed bundles. Apple capture, AppKit and Vision are operating-system
+components, outside these crate licence declarations.
 
 | Crate | Version | Declared licence |
 | --- | --- | --- |
@@ -157,6 +168,7 @@ Generated from `cargo metadata --locked --format-version 1` for Framecraft 0.2. 
 | image | 0.25.10 | MIT OR Apache-2.0 |
 | immutable-chunkmap | 2.1.4 | Apache-2.0 OR MIT |
 | indexmap | 2.14.2 | Apache-2.0 OR MIT |
+| itoa | 1.0.18 | MIT OR Apache-2.0 |
 | jni | 0.22.4 | MIT OR Apache-2.0 |
 | jni-macros | 0.22.4 | MIT OR Apache-2.0 |
 | jni-sys | 0.3.1 | MIT OR Apache-2.0 |
@@ -165,6 +177,7 @@ Generated from `cargo metadata --locked --format-version 1` for Framecraft 0.2. 
 | jobserver | 0.1.35 | MIT OR Apache-2.0 |
 | js-sys | 0.3.106 | MIT OR Apache-2.0 |
 | keyboard-types | 0.7.0 | MIT OR Apache-2.0 |
+| keyboard-types | 0.8.3 | MIT OR Apache-2.0 |
 | khronos-egl | 6.0.0 | MIT/Apache-2.0 |
 | khronos_api | 3.1.0 | Apache-2.0 |
 | libc | 0.2.191 | MIT OR Apache-2.0 |
@@ -184,6 +197,7 @@ Generated from `cargo metadata --locked --format-version 1` for Framecraft 0.2. 
 | miniz_oxide | 0.8.9 | MIT OR Zlib OR Apache-2.0 |
 | miniz_oxide | 0.9.1 | MIT OR Zlib OR Apache-2.0 |
 | moxcms | 0.8.1 | BSD-3-Clause OR Apache-2.0 |
+| muda | 0.20.0 | Apache-2.0 OR MIT |
 | naga | 24.0.0 | MIT OR Apache-2.0 |
 | ndk | 0.9.0 | MIT OR Apache-2.0 |
 | ndk-context | 0.1.1 | MIT OR Apache-2.0 |
@@ -275,6 +289,7 @@ Generated from `cargo metadata --locked --format-version 1` for Framecraft 0.2. 
 | serde | 1.0.229 | MIT OR Apache-2.0 |
 | serde_core | 1.0.229 | MIT OR Apache-2.0 |
 | serde_derive | 1.0.229 | MIT OR Apache-2.0 |
+| serde_json | 1.0.149 | MIT OR Apache-2.0 |
 | serde_repr | 0.1.21 | MIT OR Apache-2.0 |
 | sha1 | 0.10.7 | MIT OR Apache-2.0 |
 | shlex | 2.0.1 | MIT OR Apache-2.0 |
@@ -312,6 +327,7 @@ Generated from `cargo metadata --locked --format-version 1` for Framecraft 0.2. 
 | tracing | 0.1.44 | MIT |
 | tracing-attributes | 0.1.31 | MIT |
 | tracing-core | 0.1.36 | MIT |
+| tray-icon | 0.25.1 | MIT OR Apache-2.0 |
 | ttf-parser | 0.25.1 | MIT OR Apache-2.0 |
 | type-map | 0.5.1 | MIT/Apache-2.0 |
 | typenum | 1.20.1 | MIT OR Apache-2.0 |
@@ -407,6 +423,7 @@ Generated from `cargo metadata --locked --format-version 1` for Framecraft 0.2. 
 | zerovec | 0.11.8 | Unicode-3.0 |
 | zerovec-derive | 0.11.6 | Unicode-3.0 |
 | zlib-rs | 0.6.8 | Zlib |
+| zmij | 1.0.21 | MIT |
 | zune-core | 0.5.3 | MIT OR Apache-2.0 OR Zlib |
 | zune-jpeg | 0.5.15 | MIT OR Apache-2.0 OR Zlib |
 | zvariant | 4.2.0 | MIT |
