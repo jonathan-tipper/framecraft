@@ -25,7 +25,7 @@ fn main() -> Result<(), Box<dyn Error>> {
             )?;
         }
         Some("--help" | "-h") => {
-            println!("Framecraft\n\nframecraft                       Open capture sessions\nframecraft --demo                Open a labelled editor sample\nframecraft --demo-export OUT.png  Render a sample without a display\nframecraft --demo-session DIR     Create ten synthetic review frames\nframecraft --demo-pack DIR        Create an offline ten-frame pack\nframecraft --render IN OUT.png    Apply the default style\n\nAll capture and editing stays on this computer.");
+            println!("Framecraft\n\nframecraft                       Open Framecraft\nframecraft --demo                Open a labelled editor sample\nframecraft --demo-export OUT.png  Render a sample without a display\nframecraft --demo-session DIR     Create ten synthetic review frames\nframecraft --demo-pack DIR        Create an offline ten-frame pack\nframecraft --render IN OUT.png    Apply the default style\n\nAll capture and editing stays on this computer.");
         }
         None | Some("--demo") if args.len() <= 1 => {
             #[cfg(feature = "ui")]
@@ -33,7 +33,7 @@ fn main() -> Result<(), Box<dyn Error>> {
                 let demo = args.first().is_some_and(|a| a == "--demo");
                 let options = eframe::NativeOptions {
                     viewport: eframe::egui::ViewportBuilder::default()
-                        .with_inner_size([1180.0, 790.0])
+                        .with_inner_size([1080.0, 760.0])
                         .with_min_inner_size([900.0, 620.0])
                         .with_title("Framecraft"),
                     ..Default::default()

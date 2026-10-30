@@ -16,9 +16,9 @@ pub struct ShortcutSettings {
 impl Default for ShortcutSettings {
     fn default() -> Self {
         Self {
-            capture: "Super+Alt+KeyS".into(),
-            pause_resume: "Super+Alt+KeyP".into(),
-            stop: "Super+Alt+KeyX".into(),
+            capture: "Command + Option + S".into(),
+            pause_resume: "Command + Option + P".into(),
+            stop: "Command + Option + X".into(),
         }
     }
 }
@@ -52,7 +52,7 @@ impl ShortcutSettings {
                 _ => None,
             };
             if let Some(action) = reserved {
-                return Err(format!("{key} is reserved for {action}. Choose another shortcut, for example Super+Alt+Shift+KeyS."));
+                return Err(format!("{} is reserved for {action}. Choose another shortcut, for example Command + Option + Shift + S.", display_shortcut(key)?));
             }
         }
         Ok(keys)
@@ -82,7 +82,11 @@ impl ShortcutSettings {
             format!("Could not read shortcut settings: {error}. Reset to defaults.")
         })?;
         result.validate()?;
-        Ok(result)
+        Ok(Self {
+            capture: display_shortcut(&result.capture)?,
+            pause_resume: display_shortcut(&result.pause_resume)?,
+            stop: display_shortcut(&result.stop)?,
+        })
     }
 
     pub fn save(&self) -> Result<(), String> {
@@ -111,11 +115,61 @@ impl ShortcutSettings {
     }
 }
 
+/// Editable Mac key names. Legacy stored/native key tokens are accepted only at
+/// the boundary, so the interface never needs to show implementation syntax.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ShortcutParts {
+    pub command: bool,
+    pub option: bool,
+    pub control: bool,
+    pub shift: bool,
+    pub key: String,
+}
+
+impl ShortcutParts {
+    pub fn parse(value: &str) -> Result<Self, String> {
+        let canonical = canonical_key(value)?;
+        let mut tokens = canonical.split('+').collect::<Vec<_>>();
+        let key = tokens.pop().unwrap();
+        Ok(Self {
+            command: tokens.contains(&"Super"),
+            option: tokens.contains(&"Alt"),
+            control: tokens.contains(&"Control"),
+            shift: tokens.contains(&"Shift"),
+            key: key
+                .strip_prefix("Key")
+                .or_else(|| key.strip_prefix("Digit"))
+                .unwrap_or(key)
+                .into(),
+        })
+    }
+
+    pub fn display(&self) -> String {
+        let mut names = [
+            ("Command", self.command),
+            ("Option", self.option),
+            ("Control", self.control),
+            ("Shift", self.shift),
+        ]
+        .into_iter()
+        .filter_map(|(name, enabled)| enabled.then_some(name))
+        .collect::<Vec<_>>();
+        names.push(&self.key);
+        names.join(" + ")
+    }
+}
+
+pub fn display_shortcut(value: &str) -> Result<String, String> {
+    Ok(ShortcutParts::parse(value)?.display())
+}
+
 fn canonical_key(value: &str) -> Result<String, String> {
     let mut modifiers = [false; 4];
     let tokens: Vec<_> = value.split('+').map(str::trim).collect();
     if tokens.len() < 2 {
-        return Err("Use at least one modifier and a key, for example Super+Alt+KeyS.".into());
+        return Err(
+            "Choose at least one modifier and a key, for example Command + Option + S.".into(),
+        );
     }
     for token in &tokens[..tokens.len() - 1] {
         let index = match token.to_ascii_lowercase().as_str() {
@@ -123,14 +177,13 @@ fn canonical_key(value: &str) -> Result<String, String> {
             "alt" | "option" => 1,
             "control" | "ctrl" => 2,
             "shift" => 3,
-            _ => {
-                return Err(format!(
-                    "Unknown shortcut modifier: {token}. Use Super, Alt, Control or Shift."
-                ))
-            }
+            _ => return Err("Choose Command, Option, Control or Shift before the key.".into()),
         };
         if modifiers[index] {
-            return Err(format!("Shortcut repeats modifier {token}."));
+            return Err(format!(
+                "Choose {} only once in a shortcut.",
+                ["Command", "Option", "Control", "Shift"][index]
+            ));
         }
         modifiers[index] = true;
     }
@@ -167,6 +220,52 @@ fn canonical_key(value: &str) -> Result<String, String> {
 mod tests {
     use super::*;
     #[test]
+    fn legacy_and_readable_shortcuts_have_the_same_native_binding() {
+        for (legacy, readable) in [
+            ("Super+Alt+KeyS", "Command + Option + S"),
+            ("Control+Shift+F9", "Control + Shift + F9"),
+            ("Super+Alt+Digit9", "Command + Option + 9"),
+        ] {
+            assert_eq!(display_shortcut(legacy).unwrap(), readable);
+            assert_eq!(
+                canonical_key(legacy).unwrap(),
+                canonical_key(readable).unwrap()
+            );
+            assert_eq!(ShortcutParts::parse(legacy).unwrap().display(), readable);
+        }
+        assert_eq!(ShortcutSettings::default().capture, "Command + Option + S");
+    }
+
+    #[test]
+    fn existing_settings_are_readable_without_changing_their_meaning() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("prefs.json");
+        std::fs::write(&path, br#"{"capture":"Super+Alt+KeyS","pause_resume":"Super+Alt+KeyP","stop":"Super+Alt+KeyX"}"#).unwrap();
+        let loaded = ShortcutSettings::load_from(&path).unwrap();
+        assert_eq!(loaded, ShortcutSettings::default());
+        assert_eq!(loaded.canonical_keys().unwrap()[0], "Super+Alt+KeyS");
+        assert!(
+            std::fs::read_to_string(path).unwrap().contains("Super"),
+            "loading does not rewrite user preferences"
+        );
+    }
+
+    #[test]
+    fn generated_shortcut_errors_use_mac_key_names() {
+        for value in ["Super+Super+KeyS", "Bogus+KeyS", "KeyS", "Super+KeyQ"] {
+            let settings = ShortcutSettings {
+                capture: value.into(),
+                ..Default::default()
+            };
+            let error = settings.validate().unwrap_err();
+            assert!(!error.contains("Super"), "{error}");
+            assert!(
+                !error.contains("KeyS") && !error.contains("KeyQ"),
+                "{error}"
+            );
+        }
+    }
+    #[test]
     fn app_shortcuts_cannot_be_remapped_even_through_aliases() {
         for reserved in [
             "Command+q",
@@ -199,7 +298,7 @@ mod tests {
             ShortcutSettings::default()
         );
         let changed = ShortcutSettings {
-            capture: "Control+Shift+F9".into(),
+            capture: "Control + Shift + F9".into(),
             ..Default::default()
         };
         changed.save_to(&path).unwrap();

@@ -1,10 +1,18 @@
 # Framecraft 0.3 user guide
 
-This guide describes the 0.3.0-beta.1 test build. Start with synthetic content. The native test matrix remains incomplete; [test notes on GitHub](https://github.com/jonathan-tipper/framecraft/blob/v0.3.0-beta.1/docs/TEST-NOTES.md) record actual results. This link also works when reading the guide bundled with the app.
+This guide describes the 0.3.0-beta.2 test build. Start with synthetic content. The native test matrix remains incomplete; [test notes on GitHub](https://github.com/jonathan-tipper/framecraft/blob/v0.3.0-beta.2/docs/TEST-NOTES.md) record actual results. This link also works when reading the guide bundled with the app.
+
+## Install and take a screenshot
+
+Install from the DMG by dragging Framecraft onto Applications, then open it there. This is an ad-hoc signed beta; see the [installation guide on GitHub](https://github.com/jonathan-tipper/framecraft/blob/v0.3.0-beta.2/docs/INSTALLATION.md) for first-launch and update instructions.
+
+Click **Capture Area…** in the window or in the capture-frame menu bar icon. Drag directly on screen; Escape cancels. The window returns with the selected pixels ready for **Copy Image** or **Save PNG…**. **Capture Window…** and **Capture Screen** are alternatives. Capture is unavailable while a collection is active; stop it first. Unsaved edits prompt before replacement.
+
+**Screenshot** is the editor. New captures and imports retain their pixel dimensions and have no added background or shadow. **Background & framing** is optional. **More Actions** contains **Copy Text…**, **Drag Image File…** and, for saved images, **Reveal Saved Image in Finder**.
 
 ## Set up a capture session
 
-Open **Session → New capture session**. Enter a title, choose a destination and set the display number. Framecraft creates a new dated subfolder inside that destination. Use **Select shared area** to take a display snapshot, drag a crop around the useful content, then confirm **Use this area**. Confirming **Use full display** includes everything on that display.
+Open **Sessions → Start a new collection**. Enter a title, choose a destination and set the display number. Framecraft creates a new dated subfolder inside that destination. Use **Choose capture area…** to take a display snapshot, drag a crop around the useful content, then confirm **Use this area**. Confirming **Use full display** includes everything on that display.
 
 Keep participant tiles, chat and other unwanted content outside the rectangle. The source is a fixed display rectangle, not a tracked window. It stays fixed when content moves. A source dimension change pauses capture; equal-sized display reordering cannot be detected. Stop and select again after changing your display arrangement.
 
@@ -12,11 +20,11 @@ Choose a collection mode:
 
 | Mode | Suitable use | Limit |
 | --- | --- | --- |
-| On shortcut | Deliberately collect particular frames | Requires a running session and a manual trigger |
+| When I click | Deliberately collect particular frames | Requires a running session and a manual trigger |
 | On a timer | Collect regular samples | 5–120 seconds; processing adds time |
 | When content changes | Collect settled presentations | Pixel-based detector; animation and small edits can defeat it |
 
-Change mode exposes changed-area and settling controls. These are tuning controls, not a guarantee of one capture per slide. **Capture now** works in all running modes. Default stop limits are 120 elapsed minutes, including pauses, or 500 captures; the UI allows up to 480 minutes or 2,000 captures.
+**Collection options** contains changed-area and settling controls, naming and stop limits. These are tuning controls, not a guarantee of one capture per slide. **Capture now** works in all running modes. Default stop limits are 120 elapsed minutes, including pauses, or 500 captures; the UI allows up to 480 minutes or 2,000 captures.
 
 Start minimises Framecraft. Returning to Framecraft pauses collection. Resume minimises it again and resets change detection, so a previously saved stable frame may be captured again. Pause and Stop invalidate pending work; a file save already underway may finish. Source and setup controls are disabled while running or paused. Stop before changing them.
 
@@ -24,24 +32,24 @@ Start minimises Framecraft. Returning to Framecraft pauses collection. Resume mi
 
 Grant Screen Recording access to the app identified by macOS. Depending on how you launched the build, this can be Framecraft, Terminal or an IDE. Open **System Settings → Privacy & Security** if access was denied, change the relevant screen-recording permission, then restart the named app if requested. Labels differ by macOS version.
 
-The **FC** menu bar item reports session state and saved count, with **Capture now**, **Pause/Resume**, **Stop** and **Open review**. A menu action follows the same session rules as the main window. The native controls attempt to hide during capture; verify this on the Mac you use.
+The capture-frame menu bar icon offers **Capture Area…**, **Capture Window…**, **Capture Screen**, **Open Framecraft**, **Keyboard Shortcuts…** and **Quit Framecraft**. Separate session commands report collection state and saved count. Capture actions also appear in the native **Capture** application menu. The controls attempt to hide during capture; verify this on the Mac you use.
 
 | Default binding | Action |
 | --- | --- |
 | `Cmd+Option+S` | Capture selected region while running |
 | `Cmd+Option+P` | Pause/resume an active session |
 | `Cmd+Option+X` | Stop an active session |
-| `Cmd+Option+4`, `5`, `3` | One-off area, window, primary-screen capture in the Editor |
+| `Cmd+Option+4`, `5`, `3` | One-off area, window, primary-screen capture while Framecraft is active |
 | `Cmd+O` | Open a PNG/JPEG in the Editor |
 | `Cmd+S` | Save edited session copy, or export a standalone PNG |
 | `Cmd+Shift+C` | Copy current composed image in the Editor |
 | `Cmd+Z`, `Cmd+Shift+Z` | Undo, redo |
 
-Editor shortcuts apply to the visible Editor and do not operate on hidden content while reviewing a session. Text-entry controls take priority over editing shortcuts.
+Capture commands are application-wide while Framecraft is active and no collection is running. Save/copy/undo apply to the visible Screenshot editor; they do not edit a hidden document in Sessions. Text-entry controls take priority over document editing shortcuts.
 
-Use **Shortcuts** while stopped to change the 3 session bindings. Enter a modifier and key, for example `Super+Alt+KeyS` or `Control+Shift+F9`; `Super` means Command on Mac. Letters, digits and F1–F24 are accepted. Duplicate bindings are rejected. Another app can still occupy a valid combination; choose another binding if native registration fails. Shortcut preferences survive restart. **Restore defaults** changes the form; use **Save shortcuts** to keep the reset.
+Open **Keyboard Shortcuts…** from the window or menu bar. Command (⌘) and Option (⌥) are the Mac keys beside the space bar. The first section lists screenshot commands. The second has checkboxes for Command, Option, Control and Shift, plus a key menu for the three session actions. Choose at least one modifier. Letters, digits and F1–F24 are available. Duplicate or reserved bindings show an error; if another app occupies a combination, choose another. Existing saved shortcuts keep their meaning. **Restore Defaults** changes the form; **Save Shortcuts** keeps the changes. Session shortcuts become active only when a collection starts.
 
-In **New capture session**, **Save capture defaults** retains the title, destination, display number, mode, timing/change controls, naming choice and stop limits. Defaults are also saved when starting or closing the app. **Reset capture defaults** restores the initial settings. A previous region is shown only as a hint: select and confirm the source again before capture. Restart never resumes a session automatically.
+In **Collection options**, **Save as defaults** retains the title, destination, display number, mode, timing/change controls, naming choice and stop limits. Defaults are also saved when starting or closing the app. **Restore defaults** restores the initial settings. A previous region is shown only as a hint: select and confirm the source again before capture. Restart never resumes a session automatically.
 
 ## Names, originals and saved edits
 
@@ -49,11 +57,11 @@ An original is saved before optional naming starts. Names contain a UTC timestam
 
 OCR failure, a full naming queue or text with no useful heading leaves a fallback name. The PNG is still saved. **Rename** is authoritative even if a background suggestion arrives later. Collisions receive a new suffix instead of replacing another capture.
 
-In **Collected frames**, choose **Original** or a **Saved edited** variant before copying, dragging, revealing, editing or adding it to a pack. Saved variants load their already flattened pixels without automatically adding a second border or shadow. A missing edited file causes an error; the app does not silently substitute its original. **Reveal** locates the selected saved file in Finder. It does not save current editor changes.
+In **Collected screenshots**, choose **Original screenshot** or an **Edited copy** variant before copying, dragging, revealing, editing or adding it to a pack. Saved variants load their already flattened pixels without automatically adding a second border or shadow. A missing edited file causes an error; the app does not silently substitute its original. **Reveal** locates the selected saved file in Finder. It does not save current editor changes.
 
 ## Reopen, import and recover
 
-Choose **Open session…** and select the session folder, or use **Recent sessions**. Opening is for review; it does not start capture. **Forget** removes a recent-folder reference, not the folder or images. If a folder moved, locate it again through **Open session…**.
+Choose **Open session folder…** and select the session folder, or use **Recent sessions**. Opening is for review; it does not start capture. **Forget** removes a recent-folder reference, not the folder or images. If a folder moved, locate it again through **Open session folder…**.
 
 New sessions contain `framecraft-session.json`, schema version 1. It stores stable session/capture IDs, titles, sequence numbers and relative PNG records. Keep this file beside the PNGs when moving or backing up a session. A per-folder lock prevents simultaneous writers; another open copy or an incompatible filesystem can prevent opening.
 
@@ -74,7 +82,7 @@ Recovery cannot recreate lost image pixels or lost annotation layers. Keep a bac
 
 ## Explain a frame
 
-Choose **Edit** on a frame, import a PNG/JPEG, or use **Capture once** in the Editor. All drawing uses source-image coordinates; the crop and presentation styling are applied afterwards.
+Choose **Edit image** on a frame, import a PNG/JPEG, or use **Capture Area…**. All drawing uses source-image coordinates; the crop and presentation styling are applied afterwards.
 
 Use arrows, rectangles, highlights, freehand ink, redactions, text or numbered steps. **Select** chooses a mark for revision, movement or deletion. When objects overlap, the visible top mark wins; redactions take priority because they render last. Use **Select mark** to choose an obscured mark. **Delete selected mark** removes it; the Left/Right/Up/Down controls nudge it by 1 source pixel. Moving keeps a shape together and within the source bounds; an oversized label must be reduced before it can move.
 
@@ -86,7 +94,7 @@ Quitting or replacing a document with unsaved edits asks for save/export, discar
 
 ## Copy recognised text
 
-Use **Copy text…** in the Editor. Recognition receives the current composed image, including crop, styling and redactions. Review the resulting text, then explicitly copy it. Editing or replacing the image invalidates an old result. Failure, cancellation and empty results leave the clipboard unchanged.
+Use **More Actions → Copy Text…** in the Screenshot editor. Recognition receives the current composed image, including crop, styling and redactions. Review the resulting text, then explicitly copy it. Editing or replacing the image invalidates an old result. Failure, cancellation and empty results leave the clipboard unchanged.
 
 This is local Apple Vision OCR. Numbers, URLs, interface labels and footer text are retained, unlike filename heading selection. Reading order is approximate: top-to-bottom rows and left-to-right regions. Tables, columns and complex layouts can need correction. Supported languages and recognition quality depend on installed Apple Vision.
 
@@ -94,11 +102,11 @@ Recognition composites transparent pixels onto white and normalises predominantl
 
 ## Copy, drag or export a pack
 
-**Copy image** uses the chosen saved variant in Session, or **Current edits** in the Editor. **Prepare drag** creates a flattened PNG named `frame-0001.png`; drag its prepared-file control into an accepting application. Keep Framecraft open until the receiver has imported it. Prepared files stay in private temporary directories until exit, with best-effort cleanup. Cancelling the native drag does not remove the prepared file immediately. Receiving-app support requires native testing; use copy or PNG export if a target rejects the drag.
+**Copy image** uses the chosen saved variant in Session, or **Current edits** in the Editor. **More → Drag a copy…** in Sessions, or **More Actions → Drag Image File…** in Screenshot, creates a flattened PNG named `frame-0001.png`; drag its prepared-file control into an accepting application. Keep Framecraft open until the receiver has imported it. Prepared files stay in private temporary directories until exit, with best-effort cleanup. Cancelling the native drag does not remove the prepared file immediately. Receiving-app support requires native testing; use copy or PNG export if a target rejects the drag.
 
 For multiple frames:
 
-1. Select the frames in **Collected frames** and choose each saved variant.
+1. Select the frames in **Collected screenshots** and choose each saved variant.
 2. Enter captions and use **Move up/Move down** to set order.
 3. Choose **Review share pack…**. Check every preview, variant, caption and the file count.
 4. Choose a new folder name and a destination outside the source session folder and its descendants. Export.

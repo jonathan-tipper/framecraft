@@ -66,3 +66,10 @@ A pack freezes selected snapshots, order, explicit captions and variant labels b
 ## Release boundaries
 
 The target is a local, ad-hoc signed macOS test bundle. Platform deployment flags are not native evidence. Permission behaviour, multiple display arrangements, menu hiding, minimised shortcuts, external drag recipients, VoiceOver and another-Mac offline packs remain explicit [test gates](TESTING.md). No performance or user-benefit claim follows merely from unit tests or a synthetic OCR pass.
+
+
+## Beta 2 Mac entry points
+
+The first window is single capture, with Sessions as a secondary view. Native application/menu bar actions route through the same guarded capture entry point. Capture Area uses the existing OS interactive selector; no new capture backend is introduced. App-visible capture shortcuts use the native menu accelerator on macOS. The three session bindings remain global only while a collection is active. Human-readable shortcut parts round-trip to the existing native key representation; saved legacy settings retain their meaning.
+
+The icon and DMG/install scripts are distribution assets, independent of image storage. The installed bundle has the same `dev.framecraft.app` identifier and macOS 13 baseline. Ad-hoc signing is not notarisation.

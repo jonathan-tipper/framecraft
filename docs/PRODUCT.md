@@ -8,6 +8,10 @@ The [GitHub product brief](https://github.com/jonathan-tipper/framecraft/issues/
 
 The useful patterns are rapid handoff after capture; recoverable local history; revisable annotations; explicit OCR copying; and selected, ordered explanatory output. Apple already provides familiar basic capture, so adding another capture button alone offers little reason to switch. Video and hosted sharing introduce a different cost and privacy commitment and are outside this version.
 
+## First-use correction
+
+On 29 October, the user could not interpret shortcut names and found the session-first interface clunky. [Issue #20](https://github.com/jonathan-tipper/framecraft/issues/20) changes the initial task to one-off capture, adds Mac application/menu bar controls and installation, and replaces raw key syntax. This is direct feedback from one user; it does not complete the planned pilot. See the [Mac experience specification](specs/0.3-mac-experience.md).
+
 ## Delivery shape
 
 | Outcome | 0.3 test-build scope | Evidence still needed |

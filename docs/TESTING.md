@@ -103,3 +103,16 @@ Decode each output PNG and compare RGBA pixels with its frozen preview snapshot.
 The [pilot in #9](https://github.com/jonathan-tipper/framecraft/issues/9) needs consented target users and comparison tasks; do not replace it with developer smoke tests. Pre-register metrics and report assistance, failures and sample limits. [Scrolling discovery #18](https://github.com/jonathan-tipper/framecraft/issues/18) depends on that evidence and is not a beta feature.
 
 [Change-mode evaluation #12](https://github.com/jonathan-tipper/framecraft/issues/12) uses labelled synthetic transitions/noise/animation and reports misses, duplicates and transitional saves separately. Real meeting completeness and under-one-second performance aspirations need measured runs on named hardware. Record distributions and failures rather than only the fastest sample.
+
+
+## Beta 2 first-use acceptance
+
+1. Install the DMG into Applications, eject it, then launch the installed copy. Confirm the app and menu bar icons and native Framecraft/Capture/Window menus.
+2. Without visiting Sessions or Shortcuts, click Capture Area. Draw around a synthetic image in another application. Check the returned pixels, dimensions, Copy Image and Save PNG. Repeat with Escape; the previous document must survive.
+3. Add an annotation, minimise the app, then invoke Capture Area from the menu bar. The restored window must show Save/Discard/Cancel. Cancel must retain the edit. Do not perform this check with private desktop content.
+4. Open Keyboard Shortcuts. Change a modifier/key, close without saving, reopen and confirm the committed binding remains. Check duplicate/reserved combinations, a registration conflict and Restore Defaults. Uncheck the last modifier: the row must stay editable with a valid modifier selected.
+5. Start a collection. One-off capture commands must disable; session Capture/Pause/Stop must continue using committed bindings. Confirm returning to review pauses collection as documented.
+6. Resize to the minimum window and use keyboard only. Confirm settings can scroll to Save/Close and that the screen behind the dialog cannot start a collection. Record VoiceOver separately; the presence of AX nodes is not conformance evidence.
+7. Test permission denial/grant/restart using the installed app, not a development launcher. Record the exact OS wording and identity; do not bypass security protections in test scripts.
+
+See TEST-NOTES.md for what was actually performed. A selector process starting does not establish that selection/cancellation succeeded.

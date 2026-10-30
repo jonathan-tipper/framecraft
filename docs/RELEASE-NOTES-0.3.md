@@ -1,4 +1,17 @@
-# 0.3.0-beta.1 release notes
+# 0.3.0-beta.2: Mac capture and installation
+
+This beta responds to first-use feedback in [#20](https://github.com/jonathan-tipper/framecraft/issues/20). Download the Apple silicon DMG from [the prerelease](https://github.com/jonathan-tipper/framecraft/releases/tag/v0.3.0-beta.2). Drag the app into Applications; no Rust tools are needed.
+
+- Screenshot capture is the initial screen. Area, Window and Screen commands are visible and available from a capture-frame menu bar icon.
+- Native application menus expose capture actions and their Mac shortcuts. One-off capture is unavailable during active collection or conflicting operations.
+- Shortcut settings use Command/Option names, modifier checkboxes and a key selector. Existing settings retain their meaning.
+- The UI uses the installed Mac system font, light neutral surfaces and a clearer hierarchy. New captures preserve original dimensions; background styling is optional.
+- Sessions use numbered setup, visible source/status and optional collection tuning. Copy/save stay visible in the editor; secondary actions are grouped.
+- App icon, installation/update script and DMG packaging are included. Menus and normal quit retain edit/persistence protection.
+
+See [beta 2 checks](TEST-NOTES.md) and the [Mac experience specification](specs/0.3-mac-experience.md). The app is still ad-hoc signed, not notarised. Broader permission/display/receiving-app/VoiceOver, Intel and older macOS checks remain open. Fixed-region and change-mode limits below still apply.
+
+## Beta 1 feature foundation
 
 This is an Apple silicon prerelease for testing. It is ad-hoc signed and is not notarised. Download the bundle and checksum from the [GitHub prerelease](https://github.com/jonathan-tipper/framecraft/releases/tag/v0.3.0-beta.1), or use the [README build steps](../README.md#try-the-build). Exact check results and remaining failures belong in [TEST-NOTES.md](TEST-NOTES.md).
 

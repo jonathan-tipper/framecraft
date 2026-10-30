@@ -1,4 +1,4 @@
-use eframe::egui::{self, Color32, RichText};
+use eframe::egui::{self, RichText};
 pub use framecraft::library::CaptureVariant;
 use framecraft::{
     capture::CaptureTarget,
@@ -116,7 +116,8 @@ impl SessionView {
         let (recents, status) = match recent_result {
             Ok(value) => (
                 value.unwrap_or_default(),
-                "Select a shared area to capture, or open a saved session to review.".into(),
+                "Choose an area and a save folder to start a collection, or open a saved session."
+                    .into(),
             ),
             Err(error) => (RecentSessions::default(), error),
         };
@@ -596,7 +597,7 @@ impl SessionView {
             return;
         }
         let Some(target) = self.target else {
-            self.status = "Select a shared area first.".into();
+            self.status = "Choose a capture area first.".into();
             return;
         };
         let Some(folder) = self.folder.as_ref() else {
@@ -698,6 +699,10 @@ impl SessionView {
                 }
             }
             DesktopAction::Stop | DesktopAction::Quit => self.stop(),
+            DesktopAction::CaptureArea
+            | DesktopAction::CaptureWindow
+            | DesktopAction::CaptureScreen
+            | DesktopAction::Settings => {}
             DesktopAction::Review => {
                 self.pause();
                 ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
@@ -729,7 +734,7 @@ impl SessionView {
             .unwrap_or_else(|| "No capture source selected".into());
         (state, self.captures.len(), source)
     }
-    pub fn show(&mut self, ctx: &egui::Context) -> Option<Action> {
+    pub fn show(&mut self, ctx: &egui::Context, interactions: bool) -> Option<Action> {
         let mut action = None;
         let mut rename = None;
         let mut open = None;
@@ -740,366 +745,322 @@ impl SessionView {
         let mut confirm = false;
         let mut cancel_preview = false;
         let busy = self.loading.is_some();
-        egui::CentralPanel::default().show(ctx,|ui|{
-egui::ScrollArea::vertical().show(ui,|ui|{
+        egui::CentralPanel::default()
+            .frame(egui::Frame::central_panel(&ctx.style()).inner_margin(24.0))
+            .show(ctx, |ui| {
+                if !interactions { ui.disable(); }
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    ui.heading("Capture sessions");
+                    ui.label("Collect multiple screenshots into a saved folder, then review and share them together.");
+                    ui.add_space(16.0);
+                    let active = self.active();
+                    let state = self.desktop_status().0;
+                    let phase = match state {
+                        framecraft::desktop::DesktopState::Running => "Collecting",
+                        framecraft::desktop::DesktopState::Paused => "Paused",
+                        framecraft::desktop::DesktopState::Stopped => "Stopped",
+                        framecraft::desktop::DesktopState::Error => "Needs attention",
+                    };
+                    ui.group(|ui| {
+                        ui.horizontal_wrapped(|ui| {
+                            ui.strong(phase);
+                            ui.label(format!("{} screenshots saved", self.captures.len()));
+                            if active {
+                                if ui.add_enabled(
+                                    state == framecraft::desktop::DesktopState::Running,
+                                    egui::Button::new("Capture now"),
+                                ).clicked() {
+                                    if let Some(runner) = &self.runner {
+                                        if let Err(error) = runner.capture_now() {
+                                            self.status = error;
+                                        }
+                                    }
+                                }
+                                if self.runner.as_ref().is_some_and(SessionRunner::is_paused) {
+                                    if ui.button("Resume collection").on_hover_text("Minimises Framecraft and resumes capture.").clicked() {
+                                        self.resume(ctx);
+                                    }
+                                } else if ui.button("Pause collection").clicked() {
+                                    self.pause();
+                                }
+                                if ui.button("Stop collection").clicked() {
+                                    self.stop();
+                                }
+                            }
+                        });
+                        if self.failed {
+                            ui.colored_label(ui.visuals().error_fg_color, &self.status);
+                        } else {
+                            ui.label(&self.status);
+                        }
+                        if let Some(target) = self.target {
+                            ui.label(RichText::new(format!(
+                                "Capture area: display {} · {} × {} pixels",
+                                target.display, target.region.width, target.region.height
+                            )).small());
+                        }
+                        if let Some(library) = &self.library {
+                            ui.label(RichText::new(library.folder().display().to_string()).small().weak());
+                            if let Some(warning) = library.warning() {
+                                ui.colored_label(ui.visuals().warn_fg_color, warning);
+                            }
+                        }
+                    });
+                    ui.add_space(12.0);
 
-            ui.add_space(12.0);
-ui.heading("Capture and review");
-
-            ui.label("Collect the useful frames, then choose exactly what to share.");
-
-            let active=self.active();
-
-            ui.add_enabled_ui(!active&&!busy,|ui|{
-
-                ui.horizontal(|ui|{
-if ui.button("Open session…").clicked(){
-open=rfd::FileDialog::new().pick_folder();
-}
-ui.label("Open a saved folder, or preview a legacy import.");
-}
-);
-
-                egui::CollapsingHeader::new("Recent sessions").show(ui,|ui|{
-
-                    if self.recents.folders.is_empty(){
-ui.label("No recent sessions.");
-}
-
-                    for folder in &self.recents.folders{
-ui.horizontal(|ui|{
-let available=folder.is_dir();
-if ui.add_enabled(available,egui::Button::new(folder.display().to_string())).clicked(){
-open=Some(folder.clone());
-}
-if !available{
-ui.label("Unavailable. Locate the moved folder using Open session.");
-}
-if ui.small_button("Forget").clicked(){
-forget=Some(folder.clone());
-}
-}
-);
-}
-
-                }
-);
-
-            }
-);
-
-            if let Some(job)=&self.loading{
-ui.horizontal(|ui|{
-ui.spinner();
-ui.label(job.progress.lock().map(|s|s.clone()).unwrap_or_default());
-if let Ok(stage)=job.committing.lock(){
-if ui.add_enabled(!*stage,egui::Button::new("Cancel opening")).clicked(){
-job.cancel.store(true,Ordering::Relaxed);
-}
-}
-}
-);
-}
-
-            if let Some(preview)=&self.preview{
-
-                ui.group(|ui|{
-ui.heading("Review import or recovery");
-ui.label(format!("{} frames in capture order; {} recovered or imported.",preview.manifest.captures.len(),preview.import_count));
-
-                    egui::ScrollArea::vertical().max_height(220.0).id_salt("import-preview").show(ui,|ui|{
-for message in &preview.messages{
-ui.label(message);
-}
-for capture in &preview.manifest.captures{
-ui.label(format!("{:04} · {}",capture.sequence,capture.original.file));
-}
-}
-);
-
-                    ui.horizontal(|ui|{
-if ui.button("Confirm and open").clicked(){
-confirm=true;
-}
-if ui.button("Cancel import").clicked(){
-cancel_preview=true;
-}
-}
-);
-
-                }
-);
-
-            }
-
-            ui.add_enabled_ui(!active&&!busy&&self.preview.is_none(),|ui|{
-egui::CollapsingHeader::new("New capture session").default_open(self.captures.is_empty()).show(ui,|ui|{
-
-                ui.horizontal(|ui|{
-ui.label("Session");
-ui.text_edit_singleline(&mut self.title);
-}
-);
-
-                ui.horizontal(|ui|{
-if ui.button("Choose destination").clicked(){
-if let Some(p)=rfd::FileDialog::new().pick_folder(){
-self.folder=Some(p);
-}
-}
-ui.label(self.folder.as_ref().map(|p|p.display().to_string()).unwrap_or_else(||"A dated session folder will be created inside this destination.".into()));
-}
-);
-
-                ui.horizontal(|ui|{
-ui.label("Display");
-ui.add(egui::DragValue::new(&mut self.display).range(1..=16));
-if ui.button("Select shared area").clicked(){
-action=Some(Action::SelectDisplay(self.display));
-}
-if let Some(t)=self.target{
-ui.label(format!("Display {} / {} × {} px",t.display,t.region.width,t.region.height));
-}
-}
-);
-
-                ui.label(RichText::new("Leave participant tiles and chat outside the selected area.").small());
-
-                ui.horizontal(|ui|{
-ui.selectable_value(&mut self.schedule,CaptureSchedule::Manual,"On shortcut");
-ui.selectable_value(&mut self.schedule,CaptureSchedule::Interval,"On a timer");
-ui.selectable_value(&mut self.schedule,CaptureSchedule::Change,"When content changes");
-}
-);
-
-                match self.schedule{
-CaptureSchedule::Manual=>{
-ui.label("Use Capture now, the menu bar control or your configured shortcut.");
-}
-,CaptureSchedule::Interval=>{
-ui.add(egui::Slider::new(&mut self.interval,5..=120).text("Seconds between captures"));
-}
-,CaptureSchedule::Change=>{
-ui.add(egui::Slider::new(&mut self.threshold,0.01..=0.25).text("Changed area fraction"));
-ui.add(egui::Slider::new(&mut self.settle,0.5..=5.0).text("Stable seconds before saving"));
-ui.label("Video or animation can prevent a stable capture.");
-}
-}
-
-                ui.checkbox(&mut self.auto_name,"Name from the visible heading with local Apple Vision OCR");
-
-                if self.target.is_none(){
-if let Some(hint)=&self.source_hint{
-ui.label(format!("Previous selection: display {} at {}, {}, {} × {} px. Select the source again before capture.",hint.display,hint.x,hint.y,hint.width,hint.height));
-}
-}
-
-                ui.horizontal(|ui|{
-if ui.button("Save capture defaults").clicked(){
-self.save_preferences();
-}
-if ui.button("Reset capture defaults").clicked(){
-self.apply_preferences(SessionPreferences::default());
-self.save_preferences();
-}
-}
-);
-
-                ui.horizontal(|ui|{
-ui.label("Stop after");
-ui.add(egui::DragValue::new(&mut self.max_minutes).range(1..=480));
-ui.label("minutes or");
-ui.add(egui::DragValue::new(&mut self.max_frames).range(1..=2000));
-ui.label("captures");
-}
-);
-
-                if ui.add_enabled(self.target.is_some()&&self.folder.is_some(),egui::Button::new("Start session")).clicked(){
-self.start(ctx);
-}
-
-            }
-);
-}
-);
-
-            if active{
-ui.horizontal(|ui|{
-if ui.button("Capture now").clicked(){
-if let Some(r)=&self.runner{
-if let Err(e)=r.capture_now(){
-self.status=e;
-}
-}
-}
-if self.runner.as_ref().is_some_and(SessionRunner::is_paused){
-if ui.button("Resume and minimise").clicked(){
-self.resume(ctx);
-}
-}
-else if ui.button("Pause").clicked(){
-self.pause();
-}
-if ui.button("Stop session").clicked(){
-self.stop();
-}
-}
-);
-}
-
-            ui.label(RichText::new(&self.status).color(Color32::from_rgb(91,221,203)));
-
-            if let Some(library)=&self.library{
-ui.label(RichText::new(library.folder().display().to_string()).small());
-if let Some(warning)=library.warning(){
-ui.colored_label(Color32::YELLOW,warning);
-}
-}
-
-            ui.separator();
-ui.heading("Collected frames");
-
-            let selected=self.captures.iter().filter(|r|r.selected).count();
-
-            ui.horizontal(|ui|{
-ui.label(format!("{selected} selected · {} output files including index.html",selected+1));
-if ui.add_enabled(selected>0&&!busy,egui::Button::new("Review share pack…")).clicked(){
-action=Some(Action::ExportPack(self.captures.iter().filter(|r|r.selected).map(|r|ReviewFrame{
-handle:r.handle.clone(),variant:r.variant.clone(),caption:r.caption.clone()}
-).collect()));
-}
-if ui.button("Clear selection").clicked(){
-for row in &mut self.captures{
-row.selected=false;
-}
-}
-if ui.button("Refresh saved edits").clicked(){
-self.refresh_variants();
-}
-}
-);
-
-            if self.captures.is_empty(){
-ui.label("Saved frames appear here. Open a session to review its original images and saved edits.");
-}
-
-            let row_count=self.captures.len();
-
-            ui.add_enabled_ui(!busy,|ui|{
-for (index,row) in self.captures.iter_mut().enumerate(){
-ui.push_id(index,|ui|{
-ui.horizontal(|ui|{
-
-                if let Some(texture)=&row.texture{
-ui.add(egui::Image::new(texture).max_size(egui::vec2(150.0,100.0)));
-}
-else{
-if ui.button("Load preview").clicked(){
-variant=Some((index,row.variant.clone()));
-}
-}
-
-                ui.vertical(|ui|{
-
-                    ui.horizontal(|ui|{
-ui.add_enabled(row.variant_confirmed,egui::Checkbox::new(&mut row.selected,format!("Frame {:04}",row.capture.sequence)));
-ui.text_edit_singleline(&mut row.draft);
-if ui.button("Rename").clicked(){
-rename=Some((index,row.draft.clone()));
-}
-}
-);
-
-                    ui.horizontal(|ui|{
-let previous=row.variant.clone();
-egui::ComboBox::from_id_salt("variant").selected_text(if !row.variant_confirmed{
-"Choose output variant".to_string()}
-else{
-match row.variant{
-CaptureVariant::Original=>"Original".to_string(),CaptureVariant::Edited(i)=>format!("Saved edited {}",i+1)}
-}
-).show_ui(ui,|ui|{
-if ui.selectable_value(&mut row.variant,CaptureVariant::Original,"Original").clicked(){
-row.variant_confirmed=true;
-variant=Some((index,row.variant.clone()));
-}
-for info in &row.variants{
-if let CaptureVariant::Edited(i)=info.variant{
-if ui.selectable_value(&mut row.variant,CaptureVariant::Edited(i),format!("Saved edited {}",i+1)).clicked(){
-row.variant_confirmed=true;
-variant=Some((index,row.variant.clone()));
-}
-}
-}
-}
-);
-if previous!=row.variant{
-variant=Some((index,row.variant.clone()));
-}
-
-                        if ui.button("Edit").clicked(){
-action=Some(if row.variant==CaptureVariant::Original{
-Action::Edit(row.handle.clone())}
-else{
-Action::EditVariant(row.handle.clone(),row.variant.clone())}
-);
-}
-
-                        if ui.add_enabled(row.variant_confirmed,egui::Button::new("Copy image")).clicked(){
-action=Some(Action::Copy(row.handle.clone(),row.variant.clone()));
-}
-if ui.add_enabled(row.variant_confirmed,egui::Button::new("Reveal")).clicked(){
-action=Some(Action::Reveal(row.handle.clone(),row.variant.clone()));
-}
-if ui.add_enabled(row.variant_confirmed,egui::Button::new("Prepare drag")).clicked(){
-action=Some(Action::Drag(row.handle.clone(),row.variant.clone()));
-}
-
+                    if let Some(job) = &self.loading {
+                        ui.horizontal_wrapped(|ui| {
+                            ui.spinner();
+                            ui.label(job.progress.lock().map(|s| s.clone()).unwrap_or_default());
+                            if let Ok(stage) = job.committing.lock() {
+                                if ui.add_enabled(!*stage, egui::Button::new("Cancel opening")).clicked() {
+                                    job.cancel.store(true, Ordering::Relaxed);
+                                }
+                            }
+                        });
                     }
-);
+                    if let Some(preview) = &self.preview {
+                        ui.group(|ui| {
+                            ui.strong("Review import or recovery");
+                            ui.label(format!("{} screenshots in capture order; {} recovered or imported.", preview.manifest.captures.len(), preview.import_count));
+                            egui::ScrollArea::vertical().max_height(220.0).id_salt("import-preview").show(ui, |ui| {
+                                for message in &preview.messages { ui.label(message); }
+                                for capture in &preview.manifest.captures {
+                                    ui.label(format!("{:04} · {}", capture.sequence, capture.original.file));
+                                }
+                            });
+                            ui.horizontal(|ui| {
+                                if ui.button("Confirm and open").clicked() { confirm = true; }
+                                if ui.button("Cancel import").clicked() { cancel_preview = true; }
+                            });
+                        });
+                    }
 
-                    if let Some(error)=&row.error{
-ui.colored_label(Color32::YELLOW,error);
-}
-
-                    if row.error.is_some()&&ui.button("Import replacement original…").clicked(){
-relink=Some(index);
-}
-
-                    if !row.variant_confirmed{
-ui.label("Choose Original or a saved edited image before copying or adding this frame to a pack.");
-}
-
-                    if row.selected{
-ui.horizontal(|ui|{
-ui.label("Caption");
-ui.text_edit_singleline(&mut row.caption);
-if ui.add_enabled(index>0,egui::Button::new("Move up")).clicked(){
-reorder=Some((index,index.saturating_sub(1)));
-}
-if ui.add_enabled(index+1<row_count,egui::Button::new("Move down")).clicked(){
-reorder=Some((index,index+1));
-}
-}
-);
-}
-
-                }
-);
-
-            }
-);
-ui.separator();
-}
-);
-}
-}
-);
-
-        }
-);
-}
-);
+                    ui.add_enabled_ui(!active && !busy && self.preview.is_none(), |ui| {
+                        egui::CollapsingHeader::new("Start a new collection")
+                            .default_open(self.captures.is_empty())
+                            .show(ui, |ui| {
+                                ui.add_space(4.0);
+                                ui.strong("1. Choose what to capture");
+                                ui.horizontal_wrapped(|ui| {
+                                    ui.label("Display");
+                                    ui.add(egui::DragValue::new(&mut self.display).range(1..=16));
+                                    if ui.button("Choose capture area…").clicked() {
+                                        action = Some(Action::SelectDisplay(self.display));
+                                    }
+                                });
+                                if let Some(target) = self.target {
+                                    ui.label(format!("Selected: display {} · {} × {} pixels", target.display, target.region.width, target.region.height));
+                                } else {
+                                    ui.label("Draw a rectangle on the display preview, then confirm the capture area.");
+                                    if let Some(hint) = &self.source_hint {
+                                        ui.label(RichText::new(format!("Previously display {}, {} × {} pixels. Choose the area again before starting.", hint.display, hint.width, hint.height)).small().weak());
+                                    }
+                                }
+                                ui.add_space(12.0);
+                                ui.strong("2. Choose where to save");
+                                ui.horizontal_wrapped(|ui| {
+                                    if ui.button("Choose save folder…").clicked() {
+                                        if let Some(folder) = rfd::FileDialog::new().pick_folder() {
+                                            self.folder = Some(folder);
+                                        }
+                                    }
+                                    ui.label(self.folder.as_ref().map(|p| p.display().to_string()).unwrap_or_else(|| "No folder selected".into()));
+                                });
+                                ui.horizontal_wrapped(|ui| {
+                                    ui.label("Collection name");
+                                    ui.add(egui::TextEdit::singleline(&mut self.title).desired_width(280.0));
+                                });
+                                ui.label(RichText::new("A dated folder is created here. Existing screenshots are kept.").small().weak());
+                                ui.add_space(12.0);
+                                ui.strong("3. Choose when to capture");
+                                ui.horizontal_wrapped(|ui| {
+                                    ui.selectable_value(&mut self.schedule, CaptureSchedule::Manual, "When I click");
+                                    ui.selectable_value(&mut self.schedule, CaptureSchedule::Interval, "On a timer");
+                                    ui.selectable_value(&mut self.schedule, CaptureSchedule::Change, "When content changes");
+                                });
+                                match self.schedule {
+                                    CaptureSchedule::Manual => { ui.label("Click Capture now in the menu bar, or use your session shortcut."); }
+                                    CaptureSchedule::Interval => { ui.label(format!("Captures every {} seconds. Change the interval in Collection options.", self.interval)); }
+                                    CaptureSchedule::Change => { ui.label("Experimental: small changes may be missed, and video or animation can prevent a stable capture."); }
+                                }
+                                ui.add_space(8.0);
+                                egui::CollapsingHeader::new("Collection options").show(ui, |ui| {
+                                    match self.schedule {
+                                        CaptureSchedule::Manual => {}
+                                        CaptureSchedule::Interval => {
+                                            ui.add(egui::Slider::new(&mut self.interval, 5..=120).text("Seconds between captures"));
+                                        }
+                                        CaptureSchedule::Change => {
+                                            ui.add(egui::Slider::new(&mut self.threshold, 0.01..=0.25).text("Changed area fraction"));
+                                            ui.add(egui::Slider::new(&mut self.settle, 0.5..=5.0).text("Stable seconds before saving"));
+                                        }
+                                    }
+                                    ui.checkbox(&mut self.auto_name, "Name images from the visible heading");
+                                    ui.label(RichText::new("Text recognition runs on this Mac.").small().weak());
+                                    ui.horizontal_wrapped(|ui| {
+                                        ui.label("Stop after");
+                                        ui.add(egui::DragValue::new(&mut self.max_minutes).range(1..=480));
+                                        ui.label("minutes or");
+                                        ui.add(egui::DragValue::new(&mut self.max_frames).range(1..=2000));
+                                        ui.label("screenshots");
+                                    });
+                                    ui.horizontal_wrapped(|ui| {
+                                        if ui.button("Save as defaults").clicked() { self.save_preferences(); }
+                                        if ui.button("Restore defaults").clicked() {
+                                            self.apply_preferences(SessionPreferences::default());
+                                            self.save_preferences();
+                                        }
+                                    });
+                                });
+                                ui.add_space(8.0);
+                                ui.horizontal_wrapped(|ui| {
+                                    if ui.add_enabled(self.target.is_some() && self.folder.is_some(), egui::Button::new("Start collection")).clicked() {
+                                        self.start(ctx);
+                                    }
+                                    ui.label(RichText::new(format!("Stops after {} minutes or {} screenshots.", self.max_minutes, self.max_frames)).small().weak());
+                                });
+                                if self.target.is_none() || self.folder.is_none() {
+                                    ui.label(RichText::new("Choose a capture area and save folder to start.").small());
+                                }
+                            });
+                    });
+                    ui.add_space(12.0);
+                    ui.separator();
+                    ui.add_enabled_ui(!active && !busy, |ui| {
+                        ui.horizontal_wrapped(|ui| {
+                            ui.strong("Saved sessions");
+                            if ui.button("Open session folder…").clicked() {
+                                open = rfd::FileDialog::new().pick_folder();
+                            }
+                        });
+                        egui::CollapsingHeader::new("Recent sessions").show(ui, |ui| {
+                            if self.recents.folders.is_empty() { ui.label("No recent sessions yet."); }
+                            for folder in &self.recents.folders {
+                                ui.horizontal_wrapped(|ui| {
+                                    let available = folder.is_dir();
+                                    let name = folder.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| folder.display().to_string());
+                                    if ui.add_enabled(available, egui::Button::new(name)).on_hover_text(folder.display().to_string()).clicked() {
+                                        open = Some(folder.clone());
+                                    }
+                                    if !available { ui.label("Unavailable. Use Open session folder to locate it."); }
+                                    if ui.small_button("Forget").on_hover_text("Remove this recent entry. The session files stay on disk.").clicked() {
+                                        forget = Some(folder.clone());
+                                    }
+                                });
+                            }
+                        });
+                    });
+                    ui.add_space(12.0);
+                    ui.separator();
+                    ui.heading("Collected screenshots");
+                    let selected = self.captures.iter().filter(|row| row.selected).count();
+                    if self.captures.is_empty() {
+                        ui.label("Your saved screenshots will appear here. You can also open a previous session above.");
+                    } else {
+                        ui.horizontal_wrapped(|ui| {
+                            ui.label(format!("{selected} selected"));
+                            if ui.add_enabled(selected > 0 && !busy, egui::Button::new("Review share pack…")).clicked() {
+                                action = Some(Action::ExportPack(self.captures.iter().filter(|row| row.selected).map(|row| ReviewFrame {
+                                    handle: row.handle.clone(), variant: row.variant.clone(), caption: row.caption.clone(),
+                                }).collect()));
+                            }
+                            if ui.add_enabled(selected > 0, egui::Button::new("Clear selection")).clicked() {
+                                for row in &mut self.captures { row.selected = false; }
+                            }
+                            if ui.button("Refresh saved edits").clicked() { self.refresh_variants(); }
+                        });
+                        if selected > 0 {
+                            ui.label(RichText::new(format!("The pack will contain {selected} images and an offline HTML index.")).small().weak());
+                        }
+                    }
+                    let row_count = self.captures.len();
+                    ui.add_enabled_ui(!busy, |ui| {
+                        for (index, row) in self.captures.iter_mut().enumerate() {
+                            ui.push_id(index, |ui| {
+                                ui.group(|ui| {
+                                    ui.horizontal(|ui| {
+                                        if let Some(texture) = &row.texture {
+                                            ui.add(egui::Image::new(texture).max_size(egui::vec2(150.0, 100.0)));
+                                        } else if ui.button("Load preview").clicked() {
+                                            variant = Some((index, row.variant.clone()));
+                                        }
+                                        ui.vertical(|ui| {
+                                            ui.horizontal_wrapped(|ui| {
+                                                ui.add_enabled(row.variant_confirmed, egui::Checkbox::new(&mut row.selected, format!("Image {}", row.capture.sequence)));
+                                                ui.strong(&row.capture.title);
+                                            });
+                                            ui.horizontal_wrapped(|ui| {
+                                                let previous = row.variant.clone();
+                                                egui::ComboBox::from_id_salt("variant").selected_text(if !row.variant_confirmed {
+                                                    "Choose image to share".to_string()
+                                                } else {
+                                                    match row.variant {
+                                                        CaptureVariant::Original => "Original screenshot".into(),
+                                                        CaptureVariant::Edited(i) => format!("Edited copy {}", i + 1),
+                                                    }
+                                                }).show_ui(ui, |ui| {
+                                                    if ui.selectable_value(&mut row.variant, CaptureVariant::Original, "Original screenshot").clicked() {
+                                                        row.variant_confirmed = true;
+                                                        variant = Some((index, row.variant.clone()));
+                                                    }
+                                                    for info in &row.variants {
+                                                        if let CaptureVariant::Edited(i) = info.variant {
+                                                            if ui.selectable_value(&mut row.variant, CaptureVariant::Edited(i), format!("Edited copy {}", i + 1)).clicked() {
+                                                                row.variant_confirmed = true;
+                                                                variant = Some((index, row.variant.clone()));
+                                                            }
+                                                        }
+                                                    }
+                                                });
+                                                if previous != row.variant { variant = Some((index, row.variant.clone())); }
+                                                if ui.button("Edit image").clicked() {
+                                                    action = Some(if row.variant == CaptureVariant::Original {
+                                                        Action::Edit(row.handle.clone())
+                                                    } else { Action::EditVariant(row.handle.clone(), row.variant.clone()) });
+                                                }
+                                                if ui.add_enabled(row.variant_confirmed, egui::Button::new("Copy image")).clicked() {
+                                                    action = Some(Action::Copy(row.handle.clone(), row.variant.clone()));
+                                                }
+                                                ui.menu_button("More", |ui| {
+                                                    if ui.add_enabled(row.variant_confirmed, egui::Button::new("Show in Finder")).clicked() {
+                                                        action = Some(Action::Reveal(row.handle.clone(), row.variant.clone()));
+                                                        ui.close_menu();
+                                                    }
+                                                    if ui.add_enabled(row.variant_confirmed, egui::Button::new("Drag a copy…")).clicked() {
+                                                        action = Some(Action::Drag(row.handle.clone(), row.variant.clone()));
+                                                        ui.close_menu();
+                                                    }
+                                                });
+                                            });
+                                            if let Some(error) = &row.error { ui.colored_label(ui.visuals().error_fg_color, error); }
+                                            if row.error.is_some() && ui.button("Import replacement original…").clicked() { relink = Some(index); }
+                                            if !row.variant_confirmed {
+                                                ui.label(RichText::new("Choose the original or an edited copy before sharing.").small());
+                                            }
+                                            egui::CollapsingHeader::new("Rename image").show(ui, |ui| {
+                                                ui.horizontal_wrapped(|ui| {
+                                                    ui.add(egui::TextEdit::singleline(&mut row.draft).desired_width(260.0));
+                                                    if ui.button("Save name").clicked() { rename = Some((index, row.draft.clone())); }
+                                                });
+                                            });
+                                            if row.selected {
+                                                ui.horizontal_wrapped(|ui| {
+                                                    ui.label("Pack caption");
+                                                    ui.text_edit_singleline(&mut row.caption);
+                                                    if ui.add_enabled(index > 0, egui::Button::new("Move up")).clicked() { reorder = Some((index, index.saturating_sub(1))); }
+                                                    if ui.add_enabled(index + 1 < row_count, egui::Button::new("Move down")).clicked() { reorder = Some((index, index + 1)); }
+                                                });
+                                            }
+                                        });
+                                    });
+                                });
+                                ui.add_space(6.0);
+                            });
+                        }
+                    });
+                });
+            });
 
         if let Some(folder) = forget {
             self.recents.forget(&folder);
@@ -1337,7 +1298,7 @@ mod tests {
         let mut view = view();
         let ctx = egui::Context::default();
         let _ = ctx.run(egui::RawInput::default(), |ctx| {
-            assert!(view.show(ctx).is_none());
+            assert!(view.show(ctx, true).is_none());
         });
         assert!(!view.active());
         assert!(view.target.is_none());
