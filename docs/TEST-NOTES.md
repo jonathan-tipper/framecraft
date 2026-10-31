@@ -1,3 +1,37 @@
+# Native editor development verification: 0.3.0-beta.3
+
+31 October 2026. This is unreleased implementation work for #23–#28, following the [native editor contract](specs/editor-native-experience.md). The installed beta 2 and its historical results below remain separate. No new installation, release, general macOS compatibility or completed story acceptance is claimed by this section.
+
+| Check | Recorded result |
+| --- | --- |
+| Focused capture adapter tests | `cargo test --locked --lib capture::tests`: 13 passed. Includes pre-cancelled operations, child cancellation/reaping, timeout and repeated cancellation after private completion. Synthetic process tests use sleep/true; they do not open a native selector. |
+| Combined locked all-targets and no-UI tests | `cargo test --locked --all-targets`: 163 passed (114 library, 38 application/UI, 11 pixelation integration); 4 explicit tests ignored. `cargo test --locked --no-default-features`: 121 passed, 4 ignored. Includes transaction rollback/undo, dirty state, save failure/stale acknowledgements, modal guards and hidden-pixel/preview-output invariance. |
+| Formatting and strict Clippy | `cargo fmt --all -- --check` and strict Clippy (`--all-targets -- -D warnings`) passed with default and no-default features; diff whitespace passed. |
+| Release build, bundle/plist/signature | Release bundle generated at `dist/Framecraft.app`, version 0.3.0-beta.3/build 3.0.3, with ad-hoc signing. Strict signature verification and plist lint passed on the rebuilt bundle. |
+| Release compositor timing | Explicit ignored 4K test run passed: 32.04, 26.06 and 26.09 ms for full-image Pixelate 12 plus Redact on this arm64 macOS 26.6.2 machine. This measures compositor work, not end-to-end UI latency. |
+| Native editor layout and control interaction | Ran the built app with synthetic content at its default 1080 × 760 content size. Rail, contextual inspector, named swatches, selected state and close decision inspected. Corrected overflowing inspector rows and action-versus-toggle accessibility roles. Native 900 × 620 check remains pending. |
+| Native Area/Window completion and pointer/Escape cancellation | Pending. A menu entry or process test does not prove that the system selector allows pointer interaction. |
+| Native property transaction and close/save recovery | Added Highlight and Pixelate regions; colour-dialog Cancel retained the mark; Close/Cancel retained edits. Typed block-size validation, Escape and Undo passed. Actual native Save published a PNG and Close returned to capture-ready. Failure/race paths remain automated evidence; held-pointer Escape and full focus traversal remain pending. |
+| Native accessibility, VoiceOver and appearance/scale | Pending; no conformance claim. |
+| Participant comparison against beta 2 | Not performed. No improved-usability measurement is claimed. |
+
+The new capture adapter preserves private staging and hidden capture controls. Parent application integration must enable cancellation only for its active one-off capture and retain the previous document on cancellation. Native pointer reachability is a material open check because the existing tray is hidden during capture and macOS owns selection input.
+
+## Native smoke record, 31 October 2026
+
+Used the local beta 3 bundle on arm64 macOS 26.6.2 with its built-in synthetic sample, not private screen content. Screenshots: [selected highlight](evidence/beta3-native/highlight.jpg), [unsaved close decision](evidence/beta3-native/close.jpg).
+
+- Chose Green, added a centred highlight, opened Custom colour and cancelled. The selected mark and unsaved document remained. This checks dialog cancellation, not a complete colour-preview/VoiceOver study.
+- Added a pixelation region. Double-clicked the numeric field to focus it, committed 12 → 48, then typed 999. Typing passed through valid 99, which previewed; final 999 showed validation. Escape restored the transaction's opening 48. Undo, followed by reselecting the region, showed 12. The region remained present.
+- Opened Close screenshot and cancelled; the same edited image remained. A later Close → Save PNG opened the actual macOS save panel. Saved synthetic output to `/private/tmp/framecraft-beta3-native-smoke.png`; the app returned to capture-ready and stayed running. Read back the PNG header: 1120 × 700 pixels, 27,547 bytes, SHA-256 `aa8f382cb941d66c019151c1ed1816251598e50d1e9e0e056274fb3f096289ae`. This is file-existence/header evidence, not a new full output-parity test.
+- Actual AX inspection identified command buttons incorrectly marked as toggles and missing selected swatch state. Rebuilt controls expose ordinary Capture/Copy/Save/Close buttons and selected named swatches. Inspector combo/nudge/footer overflow was corrected and visually retested. These observations do not establish VoiceOver conformance.
+
+No native screen selection, permission changes, receiving-app paste/drag, minimum-size window, session-return or participant comparison was performed in this smoke run. The user-installed beta 2 was not replaced. Source tests cover additional cases but do not fill these native evidence gaps.
+
+Extend this section with observed results, build identity, hardware and remaining failures before describing a test build as verified. The [native story matrix](TESTING.md#native-editor-story-acceptance) is the procedure, not evidence of completion.
+
+---
+
 # Verification notes: 0.3.0-beta.2
 
 Checked 29 October 2026 on the same macOS 26.6.2 arm64 machine as beta 1 below. Issue [#20](https://github.com/jonathan-tipper/framecraft/issues/20) records the usability correction.

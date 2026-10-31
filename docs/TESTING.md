@@ -116,3 +116,31 @@ The [pilot in #9](https://github.com/jonathan-tipper/framecraft/issues/9) needs 
 7. Test permission denial/grant/restart using the installed app, not a development launcher. Record the exact OS wording and identity; do not bypass security protections in test scripts.
 
 See TEST-NOTES.md for what was actually performed. A selector process starting does not establish that selection/cancellation succeeded.
+
+## Native editor story acceptance
+
+This matrix covers #23–#28 against [the native contract](specs/editor-native-experience.md). Use the actual beta 3 development binary with synthetic inputs. Record its commit, bundle version, OS/hardware, display scale and launch method. Browser prototype screenshots cannot satisfy these cases.
+
+| Case | Procedure and expected evidence |
+| --- | --- |
+| Fresh capture versus saved import | Close a new unannotated capture: Save/Discard/Cancel must appear. Copy first and repeat: the decision must remain. Open a clean saved PNG and close: it may return directly. |
+| Close is separate from Quit | From a dirty standalone image, test each close decision. Cancel retains the exact edits; Discard leaves the app capture-ready; completed Save retains the file and closes only that image. Repeat capture without relaunching. |
+| Save cancellation/failure | Cancel the native picker, then use a disposable unwritable destination. Both preserve current edits; cancellation is not reported as a failed save. Retry succeeds without losing the intended pending action. |
+| Save identity and revision | Automated tests inject a completion for an old document/revision. It must not acknowledge or close newer edits. Exercise the real save-and-close path separately. |
+| Session-origin close | Open a chosen variant from a stopped session, close it and verify return to the same review context. Compare original/edited files and manifest before/after; closing cannot alter them. |
+| Gesture cancellation | Hold a highlight/freehand/crop/move gesture, press Escape before release, then release. Starting geometry and history must remain. Repeat with release first, then Undo. |
+| Mode exit and nested Escape | Cancel tool retains marks. Escape in a colour editor or nested control must not close the screenshot. Verify field/popover precedence and focus return, not only the top-level dialog. |
+| Native selector cancellation | Try Area and Window with both Escape and the pointer-accessible cancellation route. Record whether the native selector permits menu interaction. Repeat after minimising; prior visibility and document must return. A test-only process termination is not a successful pointer test. |
+| Capture exclusion and cleanup | Complete a real synthetic capture and inspect whether Framecraft's controls appear. Cancel during native selection and retry immediately; no lingering child or abandoned capture should replace the editor. |
+| Highlight target and transaction | Set Next to Green, draw, select and change to Pink. Next remains Green. Preview custom RGB, Cancel, reopen and Apply, then Undo. Original value, one undo step and useful focus return must be observed. |
+| Pixelation target and transaction | Draw two regions; change only the selected one. Start at 12, commit 48, type an invalid value, Escape and Undo. Verify the last committed value and useful undo boundaries; no invalid value reaches rendering. |
+| Pixelation rendering | Verify coarse/fine changes, 2 × 2 minimum, clipped edges, source-pixel units at zoom, overlapping regions and Redact. Unit tests cover deterministic alpha/grid and hidden-source invariance; inspect actual exported PNG separately. |
+| Output parity and originals | Compare the composed reference to PNG, clipboard and prepared drag pixels. Reopen the saved flattened result; check OCR input and session/pack output routes. Originals remain byte-identical. Native receiver testing remains separate from compositor tests. |
+| Minimum and large window | At 900 × 620 logical points and a larger size, inspect capture/copy/save/close, all tool names, inspector scrolling and every dialog decision. Repeat supported display scales and OS appearance/contrast settings. Save actual native screenshots. |
+| Icon/state vocabulary | Explain Capture/Crop, Pixelate/Redact and Cancel/Close before activating. Inspect idle/hover/pressed/focus/selected/disabled/busy/error states. Do not substitute arbitrary Unicode or missing-font symbols. |
+| Keyboard and VoiceOver | Traverse tools, properties, cancellation and closing without a pointer. Record accessible names, values, selected state, focus return and duplicate announcements. An AX-tree listing alone is insufficient. |
+| Formative comparison | Run the same predefined tasks on beta 2 and the candidate with a new participant. Record completion, wrong actions, assistance, familiarity and design changes. Do not infer improved usability from developer checks. |
+
+For pixelation, unit fixtures must vary only hidden redacted/cropped source samples and compare all visible output pixels. Include transparent pixels with differing hidden RGB, partially transparent averages, block origins, clipped edges, overlap ordering and aggregate work limits. Resource-bound rejection should produce an actionable error rather than silently lowering quality.
+
+For UI changes, source or headless checks support regression diagnosis but do not establish native pointer interaction, VoiceOver or rendering at Retina scale. Keep every unperformed item explicit in TEST-NOTES and the owning issue.

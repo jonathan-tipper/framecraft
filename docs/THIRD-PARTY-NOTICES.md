@@ -258,6 +258,10 @@ FROM, OUT OF THE USE OR INABILITY TO USE THE FONT SOFTWARE OR FROM
 OTHER DEALINGS IN THE FONT SOFTWARE.
 ```
 
+## Original editor command artwork
+
+The beta 3 command icons in `src/ui_icons.rs` are original vector primitives distributed under this project's MIT licence. They use no external icon library, downloaded assets, symbol font or system-symbol deployment requirement. Form Atlas informed the composition and labelled-control approach; its artwork and code are not bundled. The existing bundled egui fallback font notices below still apply.
+
 ## Emoji icon font: MIT
 
 ```text

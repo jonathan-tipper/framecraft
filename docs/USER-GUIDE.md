@@ -1,6 +1,6 @@
 # Framecraft 0.3 user guide
 
-This guide describes the 0.3.0-beta.2 test build. Start with synthetic content. The native test matrix remains incomplete; [test notes on GitHub](https://github.com/jonathan-tipper/framecraft/blob/v0.3.0-beta.2/docs/TEST-NOTES.md) record actual results. This link also works when reading the guide bundled with the app.
+This guide follows the unreleased 0.3.0-beta.3 native editor development build. The editor changes below are not present in an older installed beta 2. Start with synthetic content and consult [the current test notes](TEST-NOTES.md) for observed results and unperformed checks. [Historical beta 2 results on GitHub](https://github.com/jonathan-tipper/framecraft/blob/v0.3.0-beta.2/docs/TEST-NOTES.md) remain a separate record.
 
 ## Install and take a screenshot
 
@@ -84,13 +84,25 @@ Recovery cannot recreate lost image pixels or lost annotation layers. Keep a bac
 
 Choose **Edit image** on a frame, import a PNG/JPEG, or use **Capture Area…**. All drawing uses source-image coordinates; the crop and presentation styling are applied afterwards.
 
-Use arrows, rectangles, highlights, freehand ink, redactions, text or numbered steps. **Select** chooses a mark for revision, movement or deletion. When objects overlap, the visible top mark wins; redactions take priority because they render last. Use **Select mark** to choose an obscured mark. **Delete selected mark** removes it; the Left/Right/Up/Down controls nudge it by 1 source pixel. Moving keeps a shape together and within the source bounds; an oversized label must be reduced before it can move.
+The left rail names each tool alongside its icon; the right inspector shows the relevant properties. Use arrows, rectangles, highlights, pixelation, freehand ink, redactions, text or numbered steps. **Select** chooses a mark for revision, movement or deletion. When objects overlap, selection follows their visual order: redactions take priority, ordinary annotations sit above pixelation, and later pixelation regions cover earlier ones. Use **Select mark** to choose an obscured mark. **Delete selected mark** removes it; the Left/Right/Up/Down controls nudge it by 1 source pixel. Moving keeps a shape together and within the source bounds; an oversized label must be reduced before it can move.
 
 Text labels support explicit newlines, up to 2,048 Unicode characters and 32 lines. The **Size** slider offers 8–128 pixels. They use an embedded Hack font. Unsupported glyphs appear as `?`; there is no automatic wrapping or complex-script shaping. Numbered steps support 1–9,999; **Size** changes the badge radius. Choose the tool and click the image to place a label or step, or use **Apply label / step properties** to revise the selected object. Preview and export share the pixel renderer. Undo/redo affects in-memory edits.
 
 Opaque redactions render after other marks and destroy the covered pixels in the flattened export. The source image and undo history remain in memory, and the original file remains on disk. **Save edited copy** writes another PNG beside the original; a normal PNG export is also available.
 
-Quitting or replacing a document with unsaved edits asks for save/export, discard or cancellation. An export failure keeps the edits available. Saved PNGs are flattened: reopening does not restore text objects, redaction objects or undo history. There is no editable-project format in 0.3.
+**Close screenshot** leaves the current editor without quitting Framecraft. A new capture or an image with unsaved edits asks for **Save**, **Discard changes** or **Cancel**. Copying the image does not save a file and does not remove this decision. Cancel or a failed/cancelled save keeps the screenshot and edits. A clean file-backed image can close directly. Closing a session image returns to session review; closing a standalone image returns to capture-ready. Discard removes in-memory work, not original or previously saved files. Quit and replacement retain their separate save guards. Saved PNGs are flattened: reopening does not restore text objects, redaction objects or undo history. There is no editable-project format in 0.3.
+
+## Highlight, pixelate and correct a mistake
+
+Choose **Highlight**, then a named colour in **Next highlight**, and draw a rectangle. Select an existing highlight to see **Selected highlight** and recolour only that mark. Next-tool defaults remain separate. **Custom colour…** provides RGB selection with **Apply colour** and **Cancel**; highlights stay translucent. There is no opacity or stroke-weight setting for a rectangular highlight.
+
+Choose **Pixelate** and draw over the detail to obscure. **Block size** is measured in the original image's pixels, from 2 to 128; the starting value is 12. Larger values create coarser blocks. Select a completed region to adjust its size setting, move it or delete it. Changing **Next pixelation** affects the next region only. Use Undo/Redo for committed changes. Pixelation does not offer region resizing in this increment.
+
+Pixelation reduces detail; use **Redact** for an opaque cover. Pixelation sits below ordinary annotations, and Redact renders last. The original file and undo history remain available, so share the flattened output rather than the original when concealment matters.
+
+**Cancel tool** returns to Select while retaining completed marks. During a held drawing, crop or movement gesture, press Escape before releasing to abandon that gesture. After release, use Undo instead. A dialog's Cancel applies to that dialog, not the screenshot or collection.
+
+For one-off capture, **Capture → Cancel Capture** is enabled while the capture operation is active. Its pointer reachability while the system selector owns input has not yet been established; Escape remains the native selector's cancellation route. Actual selector cancellation and focus restoration must be checked on the test Mac. The application deliberately hides capture controls to avoid including them in the screenshot.
 
 ## Copy recognised text
 

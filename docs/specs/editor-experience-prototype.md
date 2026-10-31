@@ -2,7 +2,7 @@
 
 ## Status and source of truth
 
-**Design candidate, 31 October 2026. Not an approved production design.**
+**Design direction adopted for native implementation, 31 October 2026. Native acceptance remains pending.** See the [native editor contract](editor-native-experience.md) and [recorded implementation checks](../TEST-NOTES.md) for beta 3 development evidence. This browser prototype remains a reference and does not itself become the Mac app.
 
 [Epic #22](https://github.com/jonathan-tipper/framecraft/issues/22) owns the shared product rules. Issues [#23](https://github.com/jonathan-tipper/framecraft/issues/23), [#24](https://github.com/jonathan-tipper/framecraft/issues/24), [#25](https://github.com/jonathan-tipper/framecraft/issues/25), [#26](https://github.com/jonathan-tipper/framecraft/issues/26), [#27](https://github.com/jonathan-tipper/framecraft/issues/27) and [#28](https://github.com/jonathan-tipper/framecraft/issues/28) own their numbered acceptance criteria. This spec makes their proposed UI and interaction design concrete. SDD level: **Spec-first**.
 

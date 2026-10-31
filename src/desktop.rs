@@ -6,6 +6,8 @@ pub enum DesktopAction {
     CaptureArea,
     CaptureWindow,
     CaptureScreen,
+    CancelCapture,
+    CloseScreenshot,
     Settings,
     Capture,
     PauseResume,
@@ -174,6 +176,8 @@ mod native {
         capture_area: MenuItem,
         capture_window: MenuItem,
         capture_screen: MenuItem,
+        cancel_capture: MenuItem,
+        close_screenshot: MenuItem,
         settings: MenuItem,
         quit: MenuItem,
         status: MenuItem,
@@ -219,6 +223,8 @@ mod native {
                 true,
                 Some(Accelerator::new(capture_keys, Code::Digit3)),
             );
+            let cancel_capture = MenuItem::new("Cancel Capture", false, None);
+            let close_screenshot = MenuItem::new("Close Screenshot", false, None);
             let settings = MenuItem::new(
                 "Keyboard Shortcuts…",
                 true,
@@ -239,6 +245,7 @@ mod native {
                 &capture_area,
                 &capture_window,
                 &capture_screen,
+                &cancel_capture,
                 &PredefinedMenuItem::separator(),
                 &review,
                 &settings,
@@ -294,6 +301,7 @@ mod native {
                     &capture_area,
                     &capture_window,
                     &capture_screen,
+                    &cancel_capture,
                     &PredefinedMenuItem::separator(),
                     &capture,
                     &pause,
@@ -306,6 +314,7 @@ mod native {
                 true,
                 &[
                     &review,
+                    &close_screenshot,
                     &PredefinedMenuItem::minimize(None),
                     &PredefinedMenuItem::zoom(None),
                 ],
@@ -346,6 +355,8 @@ mod native {
                 capture_area,
                 capture_window,
                 capture_screen,
+                cancel_capture,
+                close_screenshot,
                 settings,
                 quit,
                 status,
@@ -386,6 +397,13 @@ mod native {
                 } else if event.id == *self.capture_screen.id() && self.capture_screen.is_enabled()
                 {
                     actions.push(DesktopAction::CaptureScreen);
+                } else if event.id == *self.close_screenshot.id()
+                    && self.close_screenshot.is_enabled()
+                {
+                    actions.push(DesktopAction::CloseScreenshot);
+                } else if event.id == *self.cancel_capture.id() && self.cancel_capture.is_enabled()
+                {
+                    actions.push(DesktopAction::CancelCapture);
                 } else if event.id == *self.settings.id() {
                     actions.push(DesktopAction::Settings);
                 } else if event.id == *self.quit.id() {
@@ -453,10 +471,19 @@ mod native {
 
         /// Disable one-off capture during another capture, a modal decision or
         /// any state in which the application cannot safely replace its image.
+        pub fn set_close_available(&mut self, available: bool) {
+            self.close_screenshot.set_enabled(available);
+        }
         pub fn set_capture_available(&mut self, available: bool) {
             self.capture_area.set_enabled(available);
             self.capture_window.set_enabled(available);
             self.capture_screen.set_enabled(available);
+        }
+
+        /// Only the active one-off capture owns this cancellation route. The
+        /// session Stop action and its state remain separate.
+        pub fn set_capture_cancellable(&mut self, cancellable: bool) {
+            self.cancel_capture.set_enabled(cancellable);
         }
 
         /// A failed replacement rolls back newly registered keys. Retained old
@@ -623,6 +650,8 @@ impl DesktopControls {
     }
     pub fn update(&mut self, _: DesktopState, _: usize, _: &str) {}
     pub fn set_capture_available(&mut self, _: bool) {}
+    pub fn set_close_available(&mut self, _: bool) {}
+    pub fn set_capture_cancellable(&mut self, _: bool) {}
     pub fn configure_shortcuts(&mut self, _: &ShortcutSettings, _: bool) -> Result<(), String> {
         Err("Global shortcuts require macOS.".into())
     }

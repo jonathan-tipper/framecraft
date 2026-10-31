@@ -9,6 +9,11 @@ use ab_glyph::{Font, FontRef, ScaleFont};
 use image::{DynamicImage, ImageDecoder, ImageFormat, ImageReader, Limits, Rgba, RgbaImage};
 
 pub const MAX_PIXELS: u64 = 64_000_000;
+pub const PIXELATE_MIN_BLOCK_SIZE: u32 = 2;
+pub const PIXELATE_MAX_BLOCK_SIZE: u32 = 128;
+pub const PIXELATE_DEFAULT_BLOCK_SIZE: u32 = 12;
+/// Aggregate eligible source pixels sampled by all pixelation regions per render.
+pub const MAX_PIXELATE_SAMPLES: u64 = MAX_PIXELS * 4;
 pub const MAX_DIMENSION: u32 = 16_384;
 const REDACTION_COLOUR: Rgba<u8> = Rgba([24, 26, 32, 255]);
 const MAX_ANNOTATIONS: usize = 1_000;
@@ -46,6 +51,10 @@ pub enum Annotation {
     Highlight {
         rect: Rect,
         colour: [u8; 4],
+    },
+    Pixelate {
+        rect: Rect,
+        block_size: u32,
     },
     Freehand {
         points: Vec<Point>,
@@ -236,8 +245,28 @@ fn validate_annotations(doc: &Document) -> Result<(), String> {
             "Use no more than {MAX_ANNOTATIONS} annotations per image."
         ));
     }
+    let crop = crop_rect(doc)?;
+    let mut pixelate_samples = 0_u64;
     for annotation in &doc.annotations {
         match annotation {
+            Annotation::Pixelate { rect, block_size } => {
+                let clipped = clipped_rect(*rect, doc.source.width(), doc.source.height())
+                    .filter(|r| r.width >= 2 && r.height >= 2)
+                    .ok_or(
+                        "Select a larger area: pixelation needs at least 2 × 2 source pixels.",
+                    )?;
+                if !(PIXELATE_MIN_BLOCK_SIZE..=PIXELATE_MAX_BLOCK_SIZE).contains(block_size) {
+                    return Err(
+                        "Block size must be between 2 and 128 original-image pixels.".into(),
+                    );
+                }
+                if let Some(eligible) = intersect_rect(clipped, crop) {
+                    pixelate_samples += u64::from(eligible.width) * u64::from(eligible.height);
+                    if pixelate_samples > MAX_PIXELATE_SAMPLES {
+                        return Err("Pixelation covers too many pixels; remove overlapping regions or use a smaller crop.".into());
+                    }
+                }
+            }
             Annotation::Arrow {
                 from, to, width, ..
             } => {
@@ -322,12 +351,42 @@ fn validate_annotations(doc: &Document) -> Result<(), String> {
 /// Render annotations, then crop, then add presentation styling.
 /// Redactions always obscure other annotations, regardless of creation order.
 pub fn render(doc: &Document) -> Result<RgbaImage, String> {
+    render_composed(doc, false)
+}
+
+/// Full-source editing canvas without presentation styling. Retains the crop's
+/// sampling boundary so the retained part agrees with exported pixelation;
+/// clearing `doc.crop` to produce an editor preview would leak discarded samples.
+pub fn render_edit_source(doc: &Document) -> Result<RgbaImage, String> {
+    render_composed(doc, true)
+}
+
+fn render_composed(doc: &Document, edit_source: bool) -> Result<RgbaImage, String> {
     let (width, height) = dimensions(doc)?;
     let crop = crop_rect(doc)?;
     validate_annotations(doc)?;
     let mut source = Cow::Borrowed(&doc.source);
     if !doc.annotations.is_empty() {
         let target = source.to_mut();
+        if doc
+            .annotations
+            .iter()
+            .any(|a| matches!(a, Annotation::Pixelate { .. }))
+        {
+            // All effects sample one stable base. Hidden redacted samples are
+            // replaced before any averaging; crop bounds are applied per cell.
+            let mut sanitised = Cow::Borrowed(&doc.source);
+            for annotation in &doc.annotations {
+                if let Annotation::Redact { rect } = annotation {
+                    fill_rect(sanitised.to_mut(), *rect, REDACTION_COLOUR);
+                }
+            }
+            for annotation in &doc.annotations {
+                if let Annotation::Pixelate { rect, block_size } = annotation {
+                    draw_pixelate(target, &sanitised, *rect, crop, *block_size);
+                }
+            }
+        }
         for annotation in &doc.annotations {
             match annotation {
                 Annotation::Arrow {
@@ -347,7 +406,7 @@ pub fn render(doc: &Document) -> Result<RgbaImage, String> {
                     colour,
                     width,
                 } => draw_freehand(target, points, *colour, *width),
-                Annotation::Redact { .. } => {}
+                Annotation::Redact { .. } | Annotation::Pixelate { .. } => {}
                 Annotation::Text {
                     position,
                     text,
@@ -376,6 +435,9 @@ pub fn render(doc: &Document) -> Result<RgbaImage, String> {
         }
     }
 
+    if edit_source {
+        return Ok(source.into_owned());
+    }
     let padding = doc.style.padding;
     if padding == 0 && doc.style.radius == 0 && !doc.style.shadow {
         return Ok(image::imageops::crop_imm(
@@ -441,6 +503,74 @@ pub fn render(doc: &Document) -> Result<RgbaImage, String> {
         }
     }
     Ok(output)
+}
+
+/// Safe intersection even for caller-supplied overflowing rectangle extents.
+fn intersect_rect(a: Rect, b: Rect) -> Option<Rect> {
+    let x = a.x.max(b.x);
+    let y = a.y.max(b.y);
+    let right = (u64::from(a.x) + u64::from(a.width)).min(u64::from(b.x) + u64::from(b.width));
+    let bottom = (u64::from(a.y) + u64::from(a.height)).min(u64::from(b.y) + u64::from(b.height));
+    (u64::from(x) < right && u64::from(y) < bottom).then(|| Rect {
+        x,
+        y,
+        width: (right - u64::from(x)) as u32,
+        height: (bottom - u64::from(y)) as u32,
+    })
+}
+
+/// Region-anchored cells sample only region ∩ source ∩ crop. RGB is the
+/// alpha-weighted mean; alpha is the arithmetic mean. Integer division rounds
+/// half-up; all-transparent cells have canonical zero RGB. Replacement, not
+/// source-over blending, prevents the original showing through translucent cells.
+fn draw_pixelate(target: &mut RgbaImage, base: &RgbaImage, region: Rect, crop: Rect, block: u32) {
+    let Some(eligible) =
+        clipped_rect(region, base.width(), base.height()).and_then(|r| intersect_rect(r, crop))
+    else {
+        return;
+    };
+    let right = eligible.x + eligible.width;
+    let bottom = eligible.y + eligible.height;
+    let mut y = eligible.y;
+    while y < bottom {
+        let end_y = (y + block - (y - region.y) % block).min(bottom);
+        let mut x = eligible.x;
+        while x < right {
+            let end_x = (x + block - (x - region.x) % block).min(right);
+            let mut alpha = 0_u64;
+            let mut rgb = [0_u64; 3];
+            for py in y..end_y {
+                for px in x..end_x {
+                    let p = base.get_pixel(px, py).0;
+                    let a = u64::from(p[3]);
+                    alpha += a;
+                    for c in 0..3 {
+                        rgb[c] += u64::from(p[c]) * a;
+                    }
+                }
+            }
+            let count = u64::from(end_x - x) * u64::from(end_y - y);
+            let mut colour = [0_u8; 4];
+            colour[3] = ((alpha + count / 2) / count) as u8;
+            if colour[3] > 0 {
+                for c in 0..3 {
+                    colour[c] = ((rgb[c] + alpha / 2) / alpha) as u8;
+                }
+            }
+            fill_rect(
+                target,
+                Rect {
+                    x,
+                    y,
+                    width: end_x - x,
+                    height: end_y - y,
+                },
+                Rgba(colour),
+            );
+            x = end_x;
+        }
+        y = end_y;
+    }
 }
 
 fn rounded_distance(x: f32, y: f32, half_width: f32, half_height: f32, radius: f32) -> f32 {
@@ -867,6 +997,7 @@ pub fn annotation_bounds(annotation: &Annotation) -> Option<(Point, Point)> {
         }
         Annotation::Rectangle { rect, .. }
         | Annotation::Highlight { rect, .. }
+        | Annotation::Pixelate { rect, .. }
         | Annotation::Redact { rect } => {
             if rect.width == 0 || rect.height == 0 {
                 return None;
@@ -919,9 +1050,14 @@ pub fn hit_test(annotations: &[Annotation], point: Point, tolerance: f32) -> Opt
         return None;
     }
     let tolerance = tolerance.clamp(0.0, 256.0);
-    for redaction_pass in [true, false] {
+    for layer in [2, 1, 0] {
         for (index, annotation) in annotations.iter().enumerate().rev() {
-            if matches!(annotation, Annotation::Redact { .. }) != redaction_pass {
+            let annotation_layer = match annotation {
+                Annotation::Redact { .. } => 2,
+                Annotation::Pixelate { .. } => 0,
+                _ => 1,
+            };
+            if annotation_layer != layer {
                 continue;
             }
             let Some((min, max)) = annotation_bounds(annotation) else {
@@ -993,7 +1129,10 @@ pub fn translate_annotation(
     let mut dy = delta.y.clamp(-min.y, height as f32 - max.y);
     if matches!(
         annotation,
-        Annotation::Rectangle { .. } | Annotation::Highlight { .. } | Annotation::Redact { .. }
+        Annotation::Rectangle { .. }
+            | Annotation::Highlight { .. }
+            | Annotation::Pixelate { .. }
+            | Annotation::Redact { .. }
     ) {
         dx = dx.round();
         dy = dy.round();
@@ -1013,6 +1152,7 @@ pub fn translate_annotation(
         Annotation::Freehand { points, .. } => points.iter_mut().for_each(shift),
         Annotation::Rectangle { rect, .. }
         | Annotation::Highlight { rect, .. }
+        | Annotation::Pixelate { rect, .. }
         | Annotation::Redact { rect } => {
             rect.x = (rect.x as f32 + dx).round() as u32;
             rect.y = (rect.y as f32 + dy).round() as u32;

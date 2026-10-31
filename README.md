@@ -1,6 +1,8 @@
-# Framecraft 0.3.0-beta.2
+# Framecraft 0.3.0-beta.3 (development)
 
 Capture an area of your Mac’s screen, annotate it, then copy or save the image. For meetings and presentations, collect a sequence of frames and return to it later. Images and OCR stay on your Mac.
+
+This branch contains the next editor iteration. Beta 3 is not published yet; the downloadable beta 2 does not include these changes. Use the source build below to test this branch.
 
 ## Install on your Mac
 
@@ -17,6 +19,12 @@ This beta is ad-hoc signed, not Developer ID signed or notarised. macOS may bloc
 **Capture Window…** selects a window. **Capture Screen** takes the primary display. **Open Image…** imports a PNG or JPEG. The same capture commands are in the Mac’s **Capture** application menu. The app requests the screen access macOS requires; it never grants itself permission.
 
 Shortcuts are optional. **Command (⌘)** and **Option (⌥)** are Mac modifier keys. While Framecraft is active, **Command + Option + 4** captures an area, **5** a window and **3** the primary display. Open **Keyboard Shortcuts…** for the full list and selectable session bindings. You do not need to type key syntax.
+
+## Edit and leave a screenshot
+
+The development editor uses a labelled tool rail and a contextual inspector. Choose **Highlight** for named colour presets and custom RGB, or **Pixelate** to draw an area and adjust **Block size**. The inspector distinguishes settings for the next mark from properties of a selected mark. Use **Redact** for an opaque cover; pixelation is not guaranteed concealment.
+
+**Cancel tool** returns to Select and preserves completed marks. Use Undo after committing a mark. **Close screenshot** leaves Framecraft running; a fresh capture or unsaved edit offers Save, Discard changes and Cancel. Copying to the clipboard does not count as saving a file. Native checks and outstanding limits are recorded in [TEST-NOTES](docs/TEST-NOTES.md).
 
 ## Collect several frames
 

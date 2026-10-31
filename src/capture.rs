@@ -153,9 +153,21 @@ pub enum CaptureMode {
 /// Call on a worker thread after hiding the editor. Native selection can remain
 /// open until the user completes it, so this must not block the UI event loop.
 pub fn capture(mode: CaptureMode) -> Result<Option<RgbaImage>, String> {
+    capture_cancellable(mode, &|| false)
+}
+
+/// Cancellation affects only private capture staging. A cancelled selector is
+/// killed and reaped before returning; its pixels never reach the editor.
+pub fn capture_cancellable(
+    mode: CaptureMode,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<Option<RgbaImage>, String> {
+    if cancelled() {
+        return Ok(None);
+    }
     #[cfg(target_os = "macos")]
     {
-        capture_macos(mode)
+        run_capture(mode, &command_args(mode), cancelled)
     }
     #[cfg(not(target_os = "macos"))]
     {
@@ -174,11 +186,6 @@ fn command_args(mode: CaptureMode) -> Vec<&'static str> {
         CaptureMode::Screen => args.push("-m"),
     }
     args
-}
-
-#[cfg(target_os = "macos")]
-fn capture_macos(mode: CaptureMode) -> Result<Option<RgbaImage>, String> {
-    run_capture(mode, &command_args(mode), &|| false)
 }
 
 /// Snapshot one display without opening a picker. The index is macOS's -D index.
@@ -201,7 +208,13 @@ pub fn capture_display_cancellable(
             &["-x", "-t", "png", "-D", &index],
             cancelled,
         )?
-        .ok_or_else(|| "The display did not produce a screenshot.".into())
+        .ok_or_else(|| {
+            if cancelled() {
+                "Capture cancelled because the session changed.".into()
+            } else {
+                "The display did not produce a screenshot.".into()
+            }
+        })
     }
     #[cfg(not(target_os = "macos"))]
     {
@@ -258,6 +271,9 @@ fn run_capture(
     use std::process::{Command, Stdio};
 
     let _hidden = HiddenControls::acquire()?;
+    if cancelled() {
+        return Ok(None);
+    }
 
     // tempfile creates a private directory; explicitly preserve its 0700 mode.
     // RAII removes both the capture and the directory on success, cancellation,
@@ -286,7 +302,9 @@ fn run_capture(
             format!("Could not start macOS screen capture: {e}. Check that /usr/sbin/screencapture is available.")
         })?;
     let deadline = (mode == CaptureMode::Screen).then_some(CAPTURE_DEADLINE);
-    let status = wait_for_capture(&mut child, deadline, cancelled)?;
+    let Some(status) = wait_for_capture(&mut child, deadline, cancelled)? else {
+        return Ok(None);
+    };
 
     let file_exists = match fs::metadata(&path) {
         Ok(metadata) => metadata.is_file(),
@@ -307,9 +325,9 @@ fn run_capture(
 
     // The shared decoder checks dimensions before allocating the full image,
     // applying the same 64-megapixel ceiling as Open Image.
-    crate::editor::load_image(&path)
-        .map(Some)
-        .map_err(|e| format!("macOS captured an image, but Framecraft could not open it: {e}"))
+    let image = crate::editor::load_image(&path)
+        .map_err(|e| format!("macOS captured an image, but Framecraft could not open it: {e}"))?;
+    Ok((!cancelled()).then_some(image))
 }
 
 #[cfg(target_os = "macos")]
@@ -317,12 +335,17 @@ fn wait_for_capture(
     child: &mut std::process::Child,
     deadline: Option<Duration>,
     cancelled: &dyn Fn() -> bool,
-) -> Result<std::process::ExitStatus, String> {
+) -> Result<Option<std::process::ExitStatus>, String> {
     let started = std::time::Instant::now();
     loop {
-        let reason = if cancelled() {
-            Some("Capture cancelled because the session changed.")
-        } else if deadline.is_some_and(|limit| started.elapsed() >= limit) {
+        if cancelled() {
+            let _ = child.kill();
+            child
+                .wait()
+                .map_err(|error| format!("Could not finish cancelling screen capture: {error}"))?;
+            return Ok(None);
+        }
+        let reason = if deadline.is_some_and(|limit| started.elapsed() >= limit) {
             Some("Screen capture timed out. Session paused; check the source and permissions, then retry.")
         } else {
             None
@@ -333,7 +356,7 @@ fn wait_for_capture(
             return Err(reason.into());
         }
         match child.try_wait() {
-            Ok(Some(status)) => return Ok(status),
+            Ok(Some(status)) => return Ok(Some(status)),
             Ok(None) => std::thread::sleep(Duration::from_millis(25)),
             Err(error) => {
                 let _ = child.kill();
@@ -394,6 +417,15 @@ fn classify_completion(
 #[cfg(test)]
 mod tests {
     use super::{classify_completion, command_args, CaptureMode};
+
+    #[test]
+    fn pre_cancelled_capture_never_opens_native_selection() {
+        for mode in [CaptureMode::Area, CaptureMode::Window, CaptureMode::Screen] {
+            assert!(super::capture_cancellable(mode, &|| true)
+                .unwrap()
+                .is_none());
+        }
+    }
 
     #[test]
     fn repeated_region_crops_in_physical_pixels_and_rejects_size_changes() {
@@ -507,8 +539,21 @@ mod tests {
         assert!(child.try_wait().unwrap().is_some());
         let mut child = Command::new("/bin/sleep").arg("5").spawn().unwrap();
         assert!(super::wait_for_capture(&mut child, None, &|| true)
-            .unwrap_err()
-            .contains("cancelled"));
+            .unwrap()
+            .is_none());
         assert!(child.try_wait().unwrap().is_some());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn completed_private_capture_can_be_cancelled_without_publication() {
+        let mut child = std::process::Command::new("/usr/bin/true").spawn().unwrap();
+        child.wait().unwrap();
+        assert!(super::wait_for_capture(&mut child, None, &|| true)
+            .unwrap()
+            .is_none());
+        assert!(super::wait_for_capture(&mut child, None, &|| true)
+            .unwrap()
+            .is_none());
     }
 }

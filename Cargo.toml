@@ -1,6 +1,6 @@
 [package]
 name = "framecraft"
-version = "0.3.0-beta.2"
+version = "0.3.0-beta.3"
 edition = "2021"
 description = "A local-first, all-Rust screenshot workbench for macOS"
 license = "MIT"

@@ -1,4 +1,16 @@
-# 0.3.0-beta.2: Mac capture and installation
+# 0.3.0-beta.3: editor experience (unreleased)
+
+Development implementation of [epic #22](https://github.com/jonathan-tipper/framecraft/issues/22), using the [reviewed design candidate](specs/editor-experience-prototype.md). No beta 3 release or notarised download is published by this change. Build the current branch using the README instructions.
+
+- Canvas-centred editor with warm neutral panels, a labelled vector-icon tool rail and contextual properties.
+- Visible Cancel tool and Close screenshot, with unsaved-output protection and separate session-return behaviour.
+- Rectangular pixelation with source-pixel block size, selected-object editing and undo. Opaque Redact remains separate and renders last.
+- Named highlight colour presets and custom RGB, with selected-mark properties kept separate from next-highlight defaults.
+- Capture cancellation, document lifecycle and compositor regression coverage, with actual results and remaining native checks recorded in [TEST-NOTES](TEST-NOTES.md).
+
+The Rust/egui stack, macOS 13 deployment baseline and original-image retention remain. Browser prototype evidence does not establish native accessibility or capture behaviour. VoiceOver, participant comprehension, receiving-app and supported-Mac checks need their own evidence; the implementation stories remain open where that evidence is missing. Pixelation reduces detail and is not guaranteed to conceal sensitive content.
+
+## 0.3.0-beta.2: Mac capture and installation
 
 This beta responds to first-use feedback in [#20](https://github.com/jonathan-tipper/framecraft/issues/20). Download the Apple silicon DMG from [the prerelease](https://github.com/jonathan-tipper/framecraft/releases/tag/v0.3.0-beta.2). Drag the app into Applications; no Rust tools are needed.
 
