@@ -8,6 +8,7 @@
 | Combined locked all-targets and no-UI tests | `cargo test --locked --all-targets`: 163 passed (114 library, 38 application/UI, 11 pixelation integration); 4 explicit tests ignored. `cargo test --locked --no-default-features`: 121 passed, 4 ignored. Includes transaction rollback/undo, dirty state, save failure/stale acknowledgements, modal guards and hidden-pixel/preview-output invariance. |
 | Formatting and strict Clippy | `cargo fmt --all -- --check` and strict Clippy (`--all-targets -- -D warnings`) passed with default and no-default features; diff whitespace passed. |
 | Release build, bundle/plist/signature | Release bundle generated at `dist/Framecraft.app`, version 0.3.0-beta.3/build 3.0.3, with ad-hoc signing. Strict signature verification and plist lint passed on the rebuilt bundle. |
+| Local test DMG | `Framecraft-0.3.0-beta.3-macos-arm64.dmg` built and `hdiutil verify` passed. SHA-256 `4fc836108d45213647544615d617076957c8fd1c99dfdfdf915228026d71ce89`. Final bundled executable SHA-256 `efd0c8d601767f2750cb8350188b965ddaeb638fdbf281bbfa362c8c0de11dc9`, built from implementation commit `7e1b10bb8cdc8d930b5dcdbb51872e4d0abb42d6`. Local test artefact only; no GitHub release published. |
 | Release compositor timing | Explicit ignored 4K test run passed: 32.04, 26.06 and 26.09 ms for full-image Pixelate 12 plus Redact on this arm64 macOS 26.6.2 machine. This measures compositor work, not end-to-end UI latency. |
 | Native editor layout and control interaction | Ran the built app with synthetic content at its default 1080 × 760 content size. Rail, contextual inspector, named swatches, selected state and close decision inspected. Corrected overflowing inspector rows and action-versus-toggle accessibility roles. Native 900 × 620 check remains pending. |
 | Native Area/Window completion and pointer/Escape cancellation | Pending. A menu entry or process test does not prove that the system selector allows pointer interaction. |
@@ -15,7 +16,7 @@
 | Native accessibility, VoiceOver and appearance/scale | Pending; no conformance claim. |
 | Participant comparison against beta 2 | Not performed. No improved-usability measurement is claimed. |
 
-The new capture adapter preserves private staging and hidden capture controls. Parent application integration must enable cancellation only for its active one-off capture and retain the previous document on cancellation. Native pointer reachability is a material open check because the existing tray is hidden during capture and macOS owns selection input.
+The new capture adapter preserves private staging and hidden capture controls. The application enables cancellation only for its active one-off capture and retains the previous document on cancellation. Native pointer reachability is a material open check because the existing tray is hidden during capture and macOS owns selection input.
 
 ## Native smoke record, 31 October 2026
 
@@ -24,7 +25,7 @@ Used the local beta 3 bundle on arm64 macOS 26.6.2 with its built-in synthetic s
 - Chose Green, added a centred highlight, opened Custom colour and cancelled. The selected mark and unsaved document remained. This checks dialog cancellation, not a complete colour-preview/VoiceOver study.
 - Added a pixelation region. Double-clicked the numeric field to focus it, committed 12 → 48, then typed 999. Typing passed through valid 99, which previewed; final 999 showed validation. Escape restored the transaction's opening 48. Undo, followed by reselecting the region, showed 12. The region remained present.
 - Opened Close screenshot and cancelled; the same edited image remained. A later Close → Save PNG opened the actual macOS save panel. Saved synthetic output to `/private/tmp/framecraft-beta3-native-smoke.png`; the app returned to capture-ready and stayed running. Read back the PNG header: 1120 × 700 pixels, 27,547 bytes, SHA-256 `aa8f382cb941d66c019151c1ed1816251598e50d1e9e0e056274fb3f096289ae`. This is file-existence/header evidence, not a new full output-parity test.
-- Actual AX inspection identified command buttons incorrectly marked as toggles and missing selected swatch state. Rebuilt controls expose ordinary Capture/Copy/Save/Close buttons and selected named swatches. Inspector combo/nudge/footer overflow was corrected and visually retested. These observations do not establish VoiceOver conformance.
+- Actual AX inspection identified command buttons incorrectly marked as toggles and missing selected swatch state. Rebuilt controls expose ordinary Capture/Copy/Save/Close buttons and selected named swatches. Inspector combo/nudge/footer overflow was corrected and visually retested. Final AX inspection confirmed the selected-mark popup is named “Select mark”. These observations do not establish VoiceOver conformance.
 
 No native screen selection, permission changes, receiving-app paste/drag, minimum-size window, session-return or participant comparison was performed in this smoke run. The user-installed beta 2 was not replaced. Source tests cover additional cases but do not fill these native evidence gaps.
 
