@@ -306,7 +306,7 @@
     <div class="dialog-symbol" data-icon="highlight"></div><h2 id="colour-title">Highlight colour</h2><p id="colour-target">Preview a colour for the selected highlight.</p>
     <div class="colour-preview-row"><input type="color" id="colour-picker" aria-label="Custom highlight colour"><div><label for="colour-hex">Hex colour</label><input type="text" id="colour-hex" maxlength="7" spellcheck="false" aria-describedby="hex-error"></div></div>
     <div id="hex-error" class="field-error" hidden>Enter a 6-digit hex colour, such as #FFD447.</div>
-    <p class="property-footnote">Translucency is fixed at 80/255 in this study. Only the colour changes.</p>
+    <p class="property-footnote">Highlights stay translucent. Only the colour changes.</p>
     <div class="dialog-actions"><button class="secondary" id="cancel-colour">Cancel</button><button class="primary" id="apply-colour">Apply colour</button></div>
   </dialog>
   <dialog id="failure-dialog" aria-labelledby="failure-title">
@@ -466,7 +466,7 @@
         const colour=a?a.colour:model.nextColour;
         html+='<div class="property-section"><span class="property-title">Highlight colour</span><div class="swatches" role="group" aria-label="Highlight colour presets">';
         SWATCHES.forEach(s=>{html+='<button class="swatch" data-colour="'+s[1]+'" aria-label="'+s[0]+'" aria-pressed="'+(s[1]===colour)+'"><span class="colour-disc" style="--swatch:'+s[1]+'">'+icon('check')+'</span>'+s[0]+'</button>';});
-        html+='</div><button class="secondary custom-colour" id="custom-colour"><span class="custom-chip" style="background:'+colour+'"></span>Custom colour…</button><p class="property-footnote">Translucent highlight · Fixed 80/255 opacity</p></div>';
+        html+='</div><button class="secondary custom-colour" id="custom-colour"><span class="custom-chip" style="background:'+colour+'"></span>Custom colour…</button><p class="property-footnote">Translucent highlight · Fixed opacity</p></div>';
       }
       if(type==='pixelate'){
         const block=a?a.block:model.nextBlock;
