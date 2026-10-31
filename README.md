@@ -67,6 +67,7 @@ Images use RGBA8. Colour-managed wide-gamut/HDR output is not implemented; impor
 - [Developer guide](docs/DEVELOPER-GUIDE.md) and [architecture](docs/ARCHITECTURE.md).
 - [Testing](docs/TESTING.md), [recorded results](docs/TEST-NOTES.md), and [0.3 specification](docs/specs/0.3-session-workbench.md).
 - [Product direction](docs/PRODUCT.md), [dependency inventory](docs/DEPENDENCIES.md), and [third-party notices](docs/THIRD-PARTY-NOTICES.md).
+- [Editor design prototype](docs/prototypes/editor/README.md): proposed UI, clickable flows and story mapping for #22–#28. This is a design candidate, not a shipped app feature.
 
 ```sh
 cargo run --locked --release -- --demo

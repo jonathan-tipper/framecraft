@@ -1,0 +1,736 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Framecraft · Editor design prototype</title>
+  <style>
+    :root {
+      --chrome: #f7f6f2; --panel: #fffefa; --canvas: #e9e7e1;
+      --ink: #24272b; --muted: #5e646b; --line: #deded7;
+      --accent: #275adf; --accent-soft: #eaf0ff; --danger: #ad3434;
+      --focus: #1549ca; --radius: 8px; --surface-radius: 12px;
+      --font: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    * { box-sizing: border-box; }
+    [hidden] { display: none !important; }
+    body { margin: 0; background: #eeede8; color: var(--ink); font: 14px/1.45 var(--font); }
+    button, input, select { font: inherit; }
+    button, select { cursor: pointer; }
+    button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; border: 1px solid transparent; border-radius: var(--radius); color: var(--ink); background: transparent; min-height: 36px; padding: 7px 11px; white-space: nowrap; }
+    button:hover:not(:disabled) { background: #eeeee8; }
+    button:active:not(:disabled) { background: #e3e5df; }
+    button:disabled { opacity: .42; cursor: not-allowed; }
+    button:focus-visible, a:focus-visible, select:focus-visible, input:focus-visible, canvas:focus-visible, summary:focus-visible { outline: 3px solid var(--focus); outline-offset: 3px; }
+    button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
+    button.primary:hover:not(:disabled) { background: #1f4bc2; border-color: #1f4bc2; }
+    button.secondary { background: var(--panel); border-color: #d4d5ce; }
+    button.secondary:hover:not(:disabled) { background: #f2f3ed; }
+    button.danger { color: var(--danger); }
+    button.small { min-height: 30px; padding: 5px 8px; font-size: 12px; }
+    button.icon-button { width: 36px; padding: 7px; flex: 0 0 36px; }
+    svg.icon { width: 18px; height: 18px; flex-shrink: 0; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+    .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; border: 0; }
+    .prototype-bar { max-width: 1480px; margin: 0 auto; padding: 18px 24px 15px; display: flex; align-items: center; justify-content: space-between; gap: 18px; }
+    .prototype-kicker { color: #3e4650; font-size: 11px; font-weight: 700; letter-spacing: .09em; text-transform: uppercase; }
+    .prototype-bar p { margin: 3px 0 0; color: var(--muted); font-size: 12px; }
+    .prototype-controls { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+    .prototype-controls label { font-size: 11px; color: var(--muted); }
+    select { background: var(--panel); border: 1px solid #d4d5ce; border-radius: 7px; padding: 7px 26px 7px 9px; color: var(--ink); min-height: 34px; }
+    .window { max-width: 1432px; margin: 0 24px; height: min(820px, calc(100dvh - 132px)); min-height: 530px; background: var(--chrome); border: 1px solid #cccfc6; border-radius: 14px; box-shadow: 0 14px 40px #24272b10, 0 2px 6px #24272b06; overflow: hidden; display: flex; flex-direction: column; }
+    @media(min-width:1480px) { .window { margin-left: auto; margin-right: auto; } }
+    .titlebar { height: 45px; flex-shrink: 0; border-bottom: 1px solid #e8e8e1; display: flex; align-items: center; padding: 0 17px; gap: 17px; }
+    .traffic-lights { display: flex; gap: 7px; }
+    .traffic-lights i { display: block; width: 11px; height: 11px; border-radius: 50%; background: #e6a69f; box-shadow: inset 0 0 0 1px #00000008; }
+    .traffic-lights i:nth-child(2) { background: #e5cb90; }
+    .traffic-lights i:nth-child(3) { background: #acc6a4; }
+    .brand { display: flex; gap: 7px; align-items: center; font-size: 13px; font-weight: 650; letter-spacing: -.2px; }
+    .brand .icon { color: var(--accent); }
+    .document-title { color: var(--muted); font-size: 12px; flex: 1; text-align: center; margin-right: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .prototype-pill { font-size: 10px; color: var(--muted); letter-spacing: .06em; text-transform: uppercase; white-space: nowrap; }
+    .actionbar { min-height: 61px; flex-shrink: 0; display: flex; align-items: center; justify-content: space-between; padding: 10px 16px; gap: 10px; border-bottom: 1px solid var(--line); }
+    .action-group { display: flex; align-items: center; gap: 5px; }
+    .capture-button { gap: 8px; }
+    .actionbar .separator { height: 23px; width: 1px; background: var(--line); margin: 0 7px; }
+    .doc-state { color: var(--muted); font-size: 12px; display: flex; gap: 6px; align-items: center; margin-left: 7px; }
+    .dirty-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: #a6792c; }
+    .workspace { display: flex; min-height: 0; flex: 1; position: relative; }
+    .toolrail { flex: 0 0 132px; min-width: 132px; padding: 17px 8px 12px; display: flex; flex-direction: column; gap: 5px; border-right: 1px solid var(--line); background: var(--chrome); overflow-y: auto; overflow-x: hidden; }
+    .rail-label { color: var(--muted); font-size: 10px; letter-spacing: .09em; text-transform: uppercase; padding: 0 10px; margin: 0 0 7px; font-weight: 600; }
+    .tool { display: flex; justify-content: flex-start; min-height: 40px; padding: 9px 8px; gap: 9px; font-size: 12px; width: 100%; }
+    .tool[aria-pressed="true"] { background: var(--accent-soft); color: #174abf; box-shadow: inset 0 0 0 1px var(--accent); font-weight: 650; }
+    .tool .icon { width: 18px; height: 18px; }
+    .rail-divider { border-top: 1px solid var(--line); margin: 11px 4px; }
+    .rail-bottom { margin-top: auto; padding-top: 17px; }
+    .undo-row { display: flex; justify-content: center; gap: 3px; }
+    .rail-note { margin: 9px 4px 0; color: var(--muted); font-size: 10px; line-height: 1.5; text-align: center; }
+    .stage { flex: 1; min-width: 0; background: var(--canvas); display: flex; flex-direction: column; position: relative; overflow: hidden; }
+    .stage-toolbar { display: flex; align-items: center; justify-content: space-between; min-height: 45px; padding: 7px 17px; gap: 7px; color: var(--muted); font-size: 11px; }
+    .stage-toolbar .scale { background: #ffffff85; border: 1px solid #d7d8d1; padding: 3px 7px; border-radius: 5px; color: #555b60; font-variant-numeric: tabular-nums; }
+    .stage-hint { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .canvas-wrap { flex: 1; min-height: 0; padding: 6px 28px 28px; display: grid; place-items: center; overflow: auto; }
+    #artboard { display: block; max-width: 100%; max-height: 100%; width: auto; height: auto; object-fit: contain; box-shadow: 0 8px 30px #2b2d281b, 0 1px 3px #00000018; background: #fff; touch-action: none; border-radius: 2px; }
+    .canvas-caption { text-align: center; font-size: 10px; color: var(--muted); padding: 0 12px 15px; margin-top: -10px; }
+    .inspector { width: 236px; flex: 0 0 236px; background: var(--panel); border-left: 1px solid var(--line); overflow-y: auto; padding: 21px 18px 16px; }
+    .eyebrow { font-size: 10px; letter-spacing: .08em; text-transform: uppercase; font-weight: 650; color: var(--muted); margin-bottom: 5px; }
+    .inspector h2 { font-size: 16px; line-height: 1.3; letter-spacing: -.3px; margin: 0 0 7px; font-weight: 650; }
+    .inspector p { font-size: 12px; color: var(--muted); line-height: 1.6; margin: 0 0 18px; }
+    .property-section { padding: 17px 0; border-top: 1px solid #e7e8e1; }
+    .property-title { display: block; font-size: 12px; font-weight: 600; margin-bottom: 12px; }
+    .swatches { display: grid; grid-template-columns: repeat(3,1fr); gap: 7px; }
+    .swatch { flex-direction: column; gap: 5px; min-height: 58px; border: 1px solid transparent; font-size: 10px; padding: 6px 3px; }
+    .swatch[aria-pressed="true"] { border-color: #bacaf1; background: #f0f4ff; }
+    .colour-disc { height: 24px; width: 24px; border-radius: 50%; background: var(--swatch); border: 1px solid #00000013; display: grid; place-items: center; color: #23272b; }
+    .colour-disc svg { width: 14px; height: 14px; opacity: 0; }
+    .swatch[aria-pressed="true"] .colour-disc svg { opacity: 1; }
+    .custom-colour { width: 100%; justify-content: flex-start; margin-top: 9px; font-size: 12px; padding-left: 9px; }
+    .custom-chip { width: 16px; height: 16px; border: 1px solid #00000020; background: #ffd447; border-radius: 4px; }
+    .property-footnote { font-size: 10px !important; margin: 9px 0 0 !important; color: var(--muted) !important; line-height: 1.5 !important; }
+    .value-line { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 12px; }
+    .value-line .property-title { margin: 0; }
+    input[type="number"], input[type="text"] { width: 66px; min-height: 34px; border: 1px solid #d3d7ce; border-radius: 6px; color: var(--ink); background: #fff; padding: 6px 8px; font-variant-numeric: tabular-nums; }
+    input[type="range"] { width: 100%; accent-color: var(--accent); margin: 0; }
+    .range-labels { display: flex; justify-content: space-between; color: var(--muted); font-size: 10px; margin-top: 6px; }
+    .field-error { font-size: 11px; color: var(--danger); margin: 6px 0; }
+    .inspector .wide { width: 100%; font-size: 12px; }
+    .selection-actions { display: flex; flex-wrap: wrap; gap: 5px; }
+    .selection-actions button { font-size: 11px; }
+    .nudge { display: grid; grid-template-columns: repeat(4,1fr); gap: 4px; margin-top: 9px; }
+    .nudge button { padding: 5px; }
+    .info-row { display: flex; justify-content: space-between; font-size: 11px; margin: 10px 0; color: var(--muted); }
+    .info-row span:last-child { color: #383d40; font-variant-numeric: tabular-nums; }
+    .annotation-list { display: flex; flex-direction: column; gap: 3px; }
+    .annotation-list button { justify-content: flex-start; padding: 6px 8px; min-height: 32px; font-size: 11px; border: 1px solid transparent; }
+    .annotation-list button[aria-pressed="true"] { background: var(--accent-soft); border-color: #cbd8f4; color: #174abf; }
+    .empty-stage { flex: 1; display: flex; align-items: center; justify-content: center; padding: 35px 25px; text-align: center; overflow-y: auto; }
+    .empty-content { max-width: 480px; width: 100%; }
+    .empty-illustration { width: 145px; height: 105px; margin: 0 auto 27px; position: relative; }
+    .empty-frame { position: absolute; inset: 6px 9px 10px 9px; background: #fffefa; border: 1px solid #c9cec4; box-shadow: 0 6px 12px #3a3c3110; border-radius: 7px; transform: rotate(-6deg); }
+    .empty-frame:before { content: ""; position: absolute; inset: 18px 19px 16px; border: 1px dashed #a6b8e5; border-radius: 3px; }
+    .empty-illustration .capture-corner { position: absolute; top: 48px; right: 0; padding: 12px; color: #fff; background: var(--accent); border-radius: 12px; transform: rotate(5deg); box-shadow: 0 6px 18px #275adf28; }
+    .capture-corner .icon { width: 26px; height: 26px; }
+    .empty-content h1 { font-size: 27px; letter-spacing: -.9px; line-height: 1.2; margin: 0 0 12px; font-weight: 650; }
+    .empty-content p { font-size: 13px; color: var(--muted); max-width: 340px; margin: 0 auto 21px; }
+    .empty-options { display: flex; justify-content: center; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+    .empty-options button { font-size: 12px; }
+    .sample-link { color: #3158b8; margin-top: 20px; text-decoration: underline; text-underline-offset: 3px; font-size: 12px; }
+    .empty-content .keyboard-note { margin: 17px 0 0; font-size: 11px; }
+    kbd { font: 11px var(--font); padding: 2px 4px; border: 1px solid #d9dcd2; border-bottom-width: 2px; border-radius: 4px; background: #f7f8f2; }
+    .statusbar { flex-shrink: 0; min-height: 34px; border-top: 1px solid var(--line); padding: 7px 15px; display: flex; gap: 12px; justify-content: space-between; align-items: center; color: var(--muted); font-size: 10px; }
+    .status-message { display: flex; gap: 7px; align-items: center; min-width: 0; }
+    .status-message .status-dot { width: 5px; height: 5px; border-radius: 50%; background: #779465; flex-shrink: 0; }
+    .status-message.error { color: var(--danger); }
+    .status-message.error .status-dot { background: var(--danger); }
+    .status-end { white-space: nowrap; color: #81857e; }
+    .prototype-footer { max-width: 1480px; margin: 0 auto; display: flex; padding: 11px 25px 16px; justify-content: space-between; gap: 12px; font-size: 10px; color: var(--muted); }
+    .prototype-footer a { color: #596a90; text-decoration: none; }
+    dialog { border: 1px solid #d4d7ce; border-radius: 14px; padding: 27px; background: var(--panel); color: var(--ink); box-shadow: 0 20px 80px #1b242a35; width: min(440px,calc(100vw - 40px)); }
+    dialog::backdrop { background: #252c3550; }
+    dialog h2 { margin: 12px 0 10px; font-size: 21px; line-height: 1.25; letter-spacing: -.4px; }
+    dialog p { color: var(--muted); font-size: 13px; line-height: 1.65; margin: 0 0 14px; }
+    .dialog-symbol { display: grid; place-items: center; width: 40px; height: 40px; border-radius: 11px; background: var(--accent-soft); color: var(--accent); }
+    .dialog-symbol .icon { width: 23px; height: 23px; }
+    .dialog-actions { display: flex; justify-content: flex-end; gap: 6px; margin-top: 24px; flex-wrap: wrap; }
+    .dialog-actions .danger { margin-right: auto; }
+    .dialog-note { font-size: 11px !important; padding: 11px 12px; background: #f1f3ed; border-radius: 7px; margin-top: 16px; }
+    .colour-preview-row { display: flex; gap: 13px; align-items: center; padding: 12px 0; }
+    input[type="color"] { border: 1px solid #d3d7ce; border-radius: 7px; width: 64px; height: 50px; padding: 3px; background: white; cursor: pointer; }
+    .colour-preview-row input[type="text"] { width: 112px; text-transform: uppercase; }
+    .colour-preview-row label { display: block; font-size: 11px; color: var(--muted); margin-bottom: 5px; }
+    #notes-dialog { width: min(770px,calc(100vw - 40px)); max-height: 86dvh; overflow-y: auto; }
+    #notes-dialog h3 { font-size: 13px; margin: 22px 0 7px; }
+    #notes-dialog ul { padding-left: 18px; color: var(--muted); font-size: 12px; line-height: 1.8; }
+    .notes-map { display: grid; grid-template-columns: repeat(4,1fr); gap: 5px; margin-top: 10px; }
+    .notes-map span { display: flex; align-items: center; gap: 8px; padding: 9px 6px; font-size: 11px; }
+    .prototype-fixture { display: flex; align-items: center; gap: 8px; padding: 11px; font-size: 12px; background: #f1f3ed; border-radius: 7px; }
+    .capture-overlay { position: absolute; inset: 0; z-index: 5; background: #e5e5dd; display: flex; flex-direction: column; }
+    .capture-top { padding: 14px 19px; display: flex; align-items: center; justify-content: space-between; gap: 15px; background: #fafbf5; border-bottom: 1px solid #d8dcd0; }
+    .capture-top strong { font-size: 13px; display: block; }
+    .capture-top span { color: var(--muted); font-size: 11px; }
+    .capture-demo-wrap { flex: 1; min-height: 0; display: grid; place-items: center; padding: 20px; position: relative; overflow: hidden; }
+    #capture-canvas { display: block; max-width: 100%; max-height: 100%; width: auto; height: auto; touch-action: none; cursor: crosshair; box-shadow: 0 6px 24px #2830231a; }
+    .capture-bottom { display: flex; justify-content: center; align-items: center; gap: 12px; padding: 12px; background: #f5f6f0; font-size: 11px; color: var(--muted); }
+    .session-review { padding: 35px; overflow-y: auto; width: 100%; }
+    .session-review h1 { font-size: 27px; margin: 7px 0; letter-spacing: -.6px; }
+    .session-review p { color: var(--muted); font-size: 12px; }
+    .session-grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 16px; margin-top: 27px; }
+    .session-card { padding: 9px; border: 1px solid #d2d5ca; border-radius: 9px; background: #f8f9f3; }
+    .session-thumb { width: 100%; display: block; border-radius: 4px; }
+    .session-card strong { font-size: 12px; display: block; margin: 10px 4px 3px; }
+    .session-card p { font-size: 10px; margin: 3px 4px 8px; }
+    .session-card button { width: 100%; }
+    @media(max-width:1100px) {
+      .prototype-bar { padding: 12px 16px; }
+      .prototype-bar p { max-width: 330px; }
+      .window { margin: 0 12px; height: calc(100dvh - 120px); min-height: 500px; }
+      .document-title { margin-right: 0; }
+      .inspector { width: 214px; flex-basis: 214px; padding: 17px 14px; }
+      .toolrail { flex-basis: 132px; padding-left: 8px; padding-right: 8px; }
+      .canvas-wrap { padding: 6px 19px 25px; }
+      .doc-state { font-size: 10px; margin-left: 0; }
+      .actionbar { padding-left: 10px; padding-right: 10px; }
+      .actionbar button { font-size: 12px; }
+      .prototype-pill { display: none; }
+    }
+    @media(max-height:720px) and (min-width:761px) {
+      .prototype-bar { padding-top: 8px; padding-bottom: 8px; }
+      .prototype-bar p { display: none; }
+      .prototype-footer { padding-top: 8px; padding-bottom: 8px; }
+      .window { min-height: 0; height: calc(100dvh - 87px); }
+      .titlebar { height: 36px; }
+      .actionbar { min-height: 54px; }
+      .inspector { padding-top: 15px; }
+      .toolrail { padding-top: 11px; }
+      .canvas-caption { padding-bottom: 9px; }
+    }
+    @media(max-width:760px) {
+      .prototype-bar { display: block; padding: 12px; }
+      .prototype-controls { margin-top: 10px; }
+      .prototype-controls label { display: none; }
+      .prototype-bar p { max-width: none; }
+      .window { margin: 0 8px; min-height: 750px; height: auto; overflow: visible; }
+      .titlebar { border-radius: 14px 14px 0 0; }
+      .traffic-lights { display: none; }
+      .actionbar { flex-wrap: wrap; gap: 8px; }
+      .actionbar .action-group { flex-wrap: wrap; }
+      .actionbar button { min-height: 34px; }
+      .actionbar .separator { display: none; }
+      .workspace { flex-wrap: wrap; }
+      .toolrail { flex: 0 0 100%; min-width: 0; flex-direction: row; flex-wrap: wrap; border-right: 0; border-bottom: 1px solid var(--line); padding: 8px; gap: 2px; overflow: visible; }
+      .toolrail .rail-label, .toolrail .rail-divider, .rail-note { display: none; }
+      .toolrail .tool { width: auto; min-height: 34px; }
+      .rail-bottom { margin: 0 0 0 auto; padding: 0; }
+      .stage { min-height: 360px; flex: 1 1 100%; }
+      .canvas-wrap { padding: 8px 18px 22px; }
+      #artboard { width: 100%; height: auto; }
+      .inspector { flex: 1 1 100%; width: 100%; border-left: 0; border-top: 1px solid var(--line); max-height: 390px; }
+      .swatches { grid-template-columns: repeat(6,1fr); }
+      .statusbar { border-radius: 0 0 14px 14px; }
+      .status-end { display: none; }
+      .prototype-footer { padding: 12px; flex-wrap: wrap; }
+      .session-grid { grid-template-columns: 1fr; }
+      .notes-map { grid-template-columns: repeat(2,1fr); }
+      .capture-overlay { position: fixed; top: 80px; bottom: 12px; left: 8px; right: 8px; border: 1px solid #ccd1c6; border-radius: 12px; overflow: hidden; }
+    }
+    @media(prefers-reduced-motion:no-preference) { button { transition: background-color .12s, border-color .12s; } }
+    @media(prefers-contrast:more) { :root { --muted:#3b4146; --line:#9da49a; } button { border-color:#b4b9af; } }
+  </style>
+</head>
+<body>
+  <header class="prototype-bar">
+    <div><div class="prototype-kicker">Interactive design prototype</div><p>Framecraft editor concept · Synthetic content · Native capture, files and clipboard are simulated.</p></div>
+    <div class="prototype-controls">
+      <label for="scenario">Prototype scenario</label>
+      <select id="scenario" aria-label="Prototype scenario">
+        <option value="empty">Empty</option><option value="editor" selected>Edit sample</option><option value="capture">Capture selection</option><option value="highlight">Selected highlight</option><option value="pixelate">Pixelation</option><option value="close">Unsaved close</option><option value="save-error">Save failure</option><option value="session">Session origin</option>
+      </select>
+      <button class="small secondary" id="reset-scenario">Reset</button>
+      <button class="small" id="open-notes">Interaction notes <span data-icon="info"></span></button>
+    </div>
+  </header>
+  <main class="window" aria-label="Framecraft application prototype">
+    <div class="titlebar">
+      <div class="traffic-lights" aria-hidden="true"><i></i><i></i><i></i></div>
+      <div class="brand"><span data-icon="frame"></span>Framecraft</div>
+      <div class="document-title" id="document-title">Spring campaign · Screenshot</div>
+      <div class="prototype-pill">Design study 01</div>
+    </div>
+    <div class="actionbar">
+      <div class="action-group">
+        <button class="primary capture-button" id="capture-action"><span data-icon="capture"></span>Capture Area</button>
+        <span class="doc-state" id="doc-state"><i class="dirty-dot"></i>Not saved</span>
+      </div>
+      <div class="action-group">
+        <button id="copy-action"><span data-icon="copy"></span>Copy image</button>
+        <button class="secondary" id="save-action"><span data-icon="save"></span>Save PNG</button>
+        <div class="separator"></div>
+        <button id="close-action"><span data-icon="close"></span>Close screenshot</button>
+      </div>
+    </div>
+    <div class="workspace">
+      <nav class="toolrail" aria-label="Annotation tools" id="toolrail">
+        <p class="rail-label">Tools</p>
+        <button class="tool" data-tool="select" aria-pressed="true" title="Select a mark"><span data-icon="select"></span>Select</button>
+        <div class="rail-divider"></div>
+        <button class="tool" data-tool="highlight" aria-pressed="false" title="Highlight a rectangle"><span data-icon="highlight"></span>Highlight</button>
+        <button class="tool" data-tool="pixelate" aria-pressed="false" title="Pixelate a rectangle"><span data-icon="pixelate"></span>Pixelate</button>
+        <button class="tool" data-tool="redact" aria-pressed="false" title="Cover a rectangle with solid colour"><span data-icon="redact"></span>Redact</button>
+        <button class="tool" id="more-tools" title="See tools outside this interaction study"><span data-icon="more"></span>More tools</button>
+        <div class="rail-bottom">
+          <div class="undo-row">
+            <button class="icon-button" id="undo-action" aria-label="Undo" title="Undo · Command Z"><span data-icon="undo"></span></button>
+            <button class="icon-button" id="redo-action" aria-label="Redo" title="Redo · Command Shift Z"><span data-icon="redo"></span></button>
+          </div>
+          <p class="rail-note">Original pixels<br>stay untouched.</p>
+        </div>
+      </nav>
+      <section class="stage" aria-label="Screenshot workspace" id="stage">
+        <div class="stage-toolbar" id="stage-toolbar"><span class="stage-hint" id="stage-hint">Select a mark to adjust it.</span><span class="scale">Fit</span></div>
+        <div class="canvas-wrap" id="canvas-wrap"><canvas id="artboard" width="1200" height="750" tabindex="0" aria-label="Synthetic screenshot canvas. Select a tool and drag to add a region, or use Add example region in the inspector."></canvas></div>
+        <div class="canvas-caption" id="canvas-caption">1200 × 750 px · Synthetic design-review screenshot</div>
+        <div class="empty-stage" id="empty-stage" hidden>
+          <div class="empty-content">
+            <div class="empty-illustration" aria-hidden="true"><div class="empty-frame"></div><span class="capture-corner" data-icon="capture"></span></div>
+            <h1>A screenshot, ready to explain.</h1>
+            <p>Capture what matters. Add a little clarity.<br>Then get back to what you were doing.</p>
+            <button class="primary" id="empty-capture"><span data-icon="capture"></span>Capture Area</button>
+            <div class="empty-options"><button class="secondary" id="capture-window"><span data-icon="window"></span>Window</button><button class="secondary" id="capture-screen"><span data-icon="screen"></span>Screen</button><button class="secondary" id="open-image"><span data-icon="open"></span>Open image</button></div>
+            <p class="keyboard-note">Choose an area by dragging. <kbd>Esc</kbd> cancels.</p>
+            <button class="sample-link" id="load-sample">Try a synthetic sample</button>
+          </div>
+        </div>
+        <div class="session-review" id="session-review" hidden>
+          <div class="eyebrow">Saved session · Review only</div><h1>Spring campaign review</h1><p>Your original screenshots and saved copies stay here when you close the editor.</p>
+          <div class="session-grid" id="session-grid"></div>
+        </div>
+      </section>
+      <aside class="inspector" id="inspector" aria-label="Contextual properties"></aside>
+      <section class="capture-overlay" id="capture-overlay" role="dialog" aria-modal="true" aria-label="Simulated capture selection" hidden>
+        <div class="capture-top"><div><strong>Choose an area</strong><span>Simulated selection over a synthetic image, not your screen.</span></div><button class="secondary" id="cancel-capture"><span data-icon="cancel"></span>Cancel capture</button></div>
+        <div class="capture-demo-wrap"><canvas id="capture-canvas" width="1200" height="750" tabindex="0" aria-label="Simulated capture area. Drag a rectangle, or use Capture example area for keyboard access."></canvas></div>
+        <div class="capture-bottom"><span>Drag to select · <kbd>Esc</kbd> cancels</span><button class="primary small" id="capture-example">Capture example area</button></div>
+      </section>
+    </div>
+    <footer class="statusbar"><div class="status-message" id="status-message" role="status" aria-live="polite"><i class="status-dot"></i><span id="status-text">Sample opened. Nothing leaves this prototype.</span></div><span class="status-end" id="status-end">Local editing · Original retained</span></footer>
+  </main>
+  <footer class="prototype-footer"><span>Browser prototype of a Mac application. File saving, clipboard, permissions and native capture require separate app validation.</span><a href="https://github.com/jonathan-tipper/framecraft/issues/22" target="_blank" rel="noreferrer">Design stories #22–28 ↗</a></footer>
+  <dialog id="close-dialog" aria-labelledby="close-title" aria-describedby="close-description">
+    <div class="dialog-symbol" data-icon="save"></div>
+    <h2 id="close-title">Save this screenshot before closing?</h2>
+    <p id="close-description">Keep a PNG copy of your result, or discard this unsaved screenshot. Framecraft will stay open.</p>
+    <p class="dialog-note">Copying an image does not save a file. A saved PNG keeps the appearance, not editable layers.</p>
+    <div class="dialog-actions"><button class="danger" id="discard-close">Discard changes</button><button class="secondary" id="cancel-close">Cancel</button><button class="primary" id="save-close">Save PNG</button></div>
+  </dialog>
+  <dialog id="colour-dialog" aria-labelledby="colour-title">
+    <div class="dialog-symbol" data-icon="highlight"></div><h2 id="colour-title">Highlight colour</h2><p id="colour-target">Preview a colour for the selected highlight.</p>
+    <div class="colour-preview-row"><input type="color" id="colour-picker" aria-label="Custom highlight colour"><div><label for="colour-hex">Hex colour</label><input type="text" id="colour-hex" maxlength="7" spellcheck="false" aria-describedby="hex-error"></div></div>
+    <div id="hex-error" class="field-error" hidden>Enter a 6-digit hex colour, such as #FFD447.</div>
+    <p class="property-footnote">Translucency is fixed at 80/255 in this study. Only the colour changes.</p>
+    <div class="dialog-actions"><button class="secondary" id="cancel-colour">Cancel</button><button class="primary" id="apply-colour">Apply colour</button></div>
+  </dialog>
+  <dialog id="failure-dialog" aria-labelledby="failure-title">
+    <div class="dialog-symbol" data-icon="alert"></div><h2 id="failure-title">The screenshot wasn’t saved.</h2><p>This is the simulated save-failure scenario. Your screenshot and edits are still here.</p><p class="dialog-note">In the Mac app this message would explain the actual destination problem and offer recovery. No filesystem operation was attempted here.</p>
+    <div class="dialog-actions"><button class="secondary" id="keep-editing">Keep editing</button><button class="primary" id="retry-save">Retry simulated save</button></div>
+  </dialog>
+  <dialog id="replace-dialog" aria-labelledby="replace-title">
+    <div class="dialog-symbol" data-icon="capture"></div><h2 id="replace-title">Keep this screenshot first?</h2><p>Starting another capture replaces this unsaved screenshot. Save its current appearance, discard it, or keep editing.</p><div class="dialog-actions"><button class="danger" id="discard-replace">Discard changes</button><button class="secondary" id="cancel-replace">Cancel</button><button class="primary" id="save-replace">Save PNG</button></div>
+  </dialog>
+  <dialog id="notes-dialog" aria-labelledby="notes-title">
+    <div class="eyebrow">Prototype guide</div><h2 id="notes-title">What this study demonstrates</h2>
+    <p>A canvas-led creative workbench, informed by Form Atlas’s d35 workbench, d39 contextual inspector and a52 labelled rail. This is a proposed design, not an approved native implementation.</p>
+    <h3>Try these interactions</h3>
+    <ul><li>Choose Highlight, Pixelate or Redact, then drag a region. “Add example region” provides a keyboard alternative.</li><li>Select an existing mark to change its properties. “Next” settings stay separate from “Selected” settings.</li><li>Drag the block-size slider to see real pixelation. One completed adjustment makes one undo step.</li><li>Cancel a colour preview. Press Escape during a held drawing gesture. Cancel tool preserves completed marks.</li><li>Copy image, then Close screenshot. Copy does not remove the unsaved warning.</li><li>Use Save failure to inspect recovery. Session origin shows the return to saved-session review.</li></ul>
+    <h3>Prototype boundaries</h3>
+    <p>Capture, Save and Copy are simulations. No desktop pixels, files, permissions or clipboard are accessed. The canvas draws synthetic content. Highlight, pixelation and opaque redaction previews work here, but this browser renderer is not the production Rust compositor.</p>
+    <p>Other annotation tools, resizing, production async races, full native session state and automatic source tracking are outside this study. Browser keyboard/focus checks do not establish macOS VoiceOver or native selector support. Pixelation is not guaranteed concealment; the original is retained.</p>
+    <h3>Proposed icon vocabulary</h3><div class="notes-map" id="icon-sheet"></div>
+    <h3>Review fixture</h3><label class="prototype-fixture"><input type="checkbox" id="simulate-failure">Simulate the next Save failing</label>
+    <div class="dialog-actions"><button class="primary" id="close-notes">Back to prototype</button></div>
+  </dialog>
+  <script>
+    'use strict';
+    const $ = id => document.getElementById(id);
+    const paths = {
+      frame:'M8 3H4a1 1 0 0 0-1 1v4m13-5h4a1 1 0 0 1 1 1v4M3 16v4a1 1 0 0 0 1 1h4m8 0h4a1 1 0 0 0 1-1v-4M8 8h8v8H8z',
+      capture:'M8 3H4a1 1 0 0 0-1 1v4m13-5h4a1 1 0 0 1 1 1v4M3 16v4a1 1 0 0 0 1 1h4m8 0h4a1 1 0 0 0 1-1v-4M8 12h8m-4-4v8',
+      select:'m5 3 14 10-7 1-3 7z',
+      highlight:'m5 14 9-10 6 6-9 10-6-6Zm0 0-2 6 6-2m-5 3h10',
+      pixelate:'M3 3h7v7H3zm11 0h7v7h-7zM3 14h7v7H3zm11 0h7v7h-7z',
+      redact:'M3 6h18v12H3zM6 9h12m-12 3h12m-12 3h12',
+      copy:'M8 8h12v13H8zM4 16H3V3h12v1',
+      save:'M5 3h12l4 4v14H3V3h2Zm2 0v6h10V3M7 21v-8h10v8',
+      close:'M7 3h11l3 3v15H7M3 8l7 8m0-8-7 8',
+      cancel:'m6 6 12 12M18 6 6 18',
+      undo:'M9 5 4 10l5 5m-5-5h10a6 6 0 0 1 0 12',
+      redo:'m15 5 5 5-5 5m5-5H10a6 6 0 0 0 0 12',
+      info:'M12 16v-4m0-4h.01M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0',
+      more:'M5 12h.01M12 12h.01M19 12h.01',
+      check:'m5 12 4 4L19 6',
+      window:'M3 5h18v15H3zM3 9h18M6 7h.01M9 7h.01',
+      screen:'M3 4h18v13H3zM8 21h8m-4-4v4',
+      open:'M3 7h7l2 2h9l-3 11H3zm0 0V4h7l2 3h7v2',
+      alert:'m12 3 10 18H2zm0 6v5m0 3h.01',
+      trash:'M4 6h16M9 3h6l1 3H8zm-3 3 1 12h10l1-12M10 10v7m4-7v7',
+      left:'m14 6-6 6 6 6',right:'m10 6 6 6-6 6',up:'m6 14 6-6 6 6',down:'m6 10 6 6 6-6',
+      crop:'M7 3v14h14M3 7h14v14',arrow:'M4 20 20 4M10 4h10v10',rectangle:'M3 5h18v14H3z',
+      text:'M4 4h16M12 4v17m-5 0h10',step:'M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0M10 9l2-2v10m-2 0h4',
+      pen:'M3 19c3-10 7-18 10-15s-3 11-7 13c5-5 7-6 8-3s4 2 7-2'
+    };
+    function icon(name) { return '<svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="'+(paths[name]||paths.frame)+'"/></svg>'; }
+    function paintIcons(root) { (root||document).querySelectorAll('[data-icon]').forEach(el => el.innerHTML=icon(el.dataset.icon)); }
+    paintIcons();
+    const SWATCHES=[['Yellow','#ffd447'],['Green','#87d989'],['Cyan','#70d5e4'],['Blue','#83a9fa'],['Pink','#ef98be'],['Orange','#f4ae6b']];
+    const W=1200,H=750;
+    const canvas=$('artboard'),ctx=canvas.getContext('2d'),capCanvas=$('capture-canvas'),capCtx=capCanvas.getContext('2d');
+    const base=document.createElement('canvas');base.width=W;base.height=H;const b=base.getContext('2d');
+    const sanitised=document.createElement('canvas');sanitised.width=W;sanitised.height=H;const sctx=sanitised.getContext('2d');
+    let model={view:'editor',tool:'select',annos:[],selected:null,nextColour:'#ffd447',nextBlock:12,origin:'standalone',fileSaved:false,savedFingerprint:'[]',notice:'Sample opened. Nothing leaves this prototype.',error:false};
+    let history=[],future=[],gesture=null,propertyTxn=null,colourTxn=null,captureTxn=null,returnFocus=null,closeAfterRetry=false,replaceAfterRetry=false,returnMode='editor';
+    let idCounter=1,scenarioApplying=false,sessionFrame=2;
+    const clone = x => JSON.parse(JSON.stringify(x));
+    function fitCanvas(element,container){
+      if(!container.clientWidth||!container.clientHeight)return;
+      const css=getComputedStyle(container);
+      const availableWidth=container.clientWidth-parseFloat(css.paddingLeft)-parseFloat(css.paddingRight)-2;
+      const availableHeight=container.clientHeight-parseFloat(css.paddingTop)-parseFloat(css.paddingBottom)-2;
+      const scale=Math.min(availableWidth/W,availableHeight/H);
+      if(scale>0){element.style.width=Math.floor(W*scale)+'px';element.style.height=Math.floor(H*scale)+'px';}
+    }
+    function fitAll(){fitCanvas(canvas,$('canvas-wrap'));fitCanvas(capCanvas,document.querySelector('.capture-demo-wrap'));}
+    const fitObserver=new ResizeObserver(()=>fitAll());
+    fitObserver.observe($('canvas-wrap'));fitObserver.observe(document.querySelector('.capture-demo-wrap'));
+    function isolateCapture(active){
+      document.querySelector('.actionbar').inert=active;
+      $('toolrail').inert=active;$('stage').inert=active;$('inspector').inert=active;
+    }
+    function snapshot(){return {annos:clone(model.annos),selected:model.selected};}
+    function fingerprint(){return JSON.stringify(model.annos);}
+    function unsaved(){return model.view==='editor'&&(!model.fileSaved||fingerprint()!==model.savedFingerprint);}
+    function selected(){return model.annos.find(x=>x.id===model.selected)||null;}
+    function labelFor(type){return type==='pixelate'?'pixelation':type==='redact'?'redaction':'highlight';}
+    function commit(before){if(JSON.stringify(before.annos)!==JSON.stringify(model.annos)){history.push(before);future=[];} render();}
+    function notify(text,error){model.notice=text;model.error=!!error;renderStatus();}
+    function rounded(c,x,y,w,h,r,fill){c.fillStyle=fill;c.beginPath();c.roundRect(x,y,w,h,r);c.fill();}
+    function txt(c,text,x,y,size,colour,weight){c.fillStyle=colour;c.font=(weight||400)+' '+size+'px -apple-system, BlinkMacSystemFont, sans-serif';c.fillText(text,x,y);}
+    function fixture(){
+      b.fillStyle='#fbfaf6';b.fillRect(0,0,W,H);
+      b.fillStyle='#fff';b.fillRect(0,0,W,54);b.fillStyle='#e8e9e2';b.fillRect(0,53,W,1);
+      txt(b,'FORMA',44,34,17,'#303a34',700);txt(b,'Studio / Campaigns / Spring 2027',150,33,13,'#747b74',400);
+      rounded(b,1062,15,94,25,12,'#eef2e8');txt(b,'In review',1078,32,11,'#657256',600);
+      txt(b,'CREATIVE DIRECTION',63,114,12,'#89917f',600);
+      txt(b,'A little room to think.',60,178,47,'#273d32',600);
+      txt(b,'Spring campaign · Exploring quieter spaces and brighter ideas.',63,213,17,'#798076',400);
+      rounded(b,62,249,340,285,4,'#e7b2a0');rounded(b,430,249,340,285,4,'#ced5bb');rounded(b,798,249,340,285,4,'#d6d4e5');
+      b.fillStyle='#a35941';b.fillRect(117,301,230,177);b.fillStyle='#f0c9ae';b.beginPath();b.arc(232,389,94,Math.PI,0);b.fill();b.fillRect(138,389,188,89);
+      b.fillStyle='#d88e70';b.fillRect(195,337,75,142);b.fillStyle='#f5ddc7';b.beginPath();b.arc(232,337,37.5,Math.PI,0);b.fill();
+      b.fillStyle='#e7edd9';b.beginPath();b.ellipse(600,413,120,58,0,0,Math.PI*2);b.fill();b.fillStyle='#657a5a';b.beginPath();b.ellipse(600,375,82,106,.2,0,Math.PI*2);b.fill();b.fillStyle='#b6c79c';b.beginPath();b.ellipse(620,352,65,80,.45,0,Math.PI*2);b.fill();
+      b.strokeStyle='#f2f5e9';b.lineWidth=4;b.beginPath();b.moveTo(585,463);b.lineTo(626,299);b.stroke();
+      b.fillStyle='#7b729e';b.fillRect(856,330,221,148);b.fillStyle='#b7aed2';b.fillRect(879,300,175,178);b.fillStyle='#eee9f5';b.beginPath();b.arc(966,351,58,0,Math.PI*2);b.fill();b.fillStyle='#b7aed2';b.beginPath();b.arc(990,328,58,0,Math.PI*2);b.fill();
+      txt(b,'01  WARMTH',63,565,12,'#3b4d41',600);txt(b,'02  BREATHING SPACE',430,565,12,'#3b4d41',600);txt(b,'03  POSSIBILITY',798,565,12,'#3b4d41',600);
+      b.fillStyle='#dedfd7';b.fillRect(62,591,1076,1);
+      txt(b,'Review notes',63,628,15,'#35473c',600);txt(b,'Keep the headline. Explore a lighter opening frame.',63,656,13,'#727c71',400);
+      txt(b,'SYNTHETIC CONTACT',798,625,10,'#7f897c',600);txt(b,'alex.morgan@example.test',798,651,15,'#35473c',500);
+      txt(b,'REFERENCE  FC–0274 / DRAFT ONLY',63,714,10,'#8f968b',500);txt(b,'All content in this image is invented.',913,714,10,'#8f968b',400);
+    }
+    fixture();
+    function drawScene(target,withSelection){
+      target.clearRect(0,0,W,H);target.drawImage(base,0,0);
+      sctx.clearRect(0,0,W,H);sctx.drawImage(base,0,0);
+      model.annos.filter(a=>a.type==='redact').forEach(a=>{sctx.fillStyle='#23272b';sctx.fillRect(a.x,a.y,a.w,a.h);});
+      const all=model.annos.concat(gesture&&gesture.kind==='draw'?[gesture.preview]:[]);
+      all.filter(a=>a.type==='pixelate').forEach(a=>{
+        if(a.w<2||a.h<2)return;
+        const bx=Math.max(0,Math.floor(a.x)),by=Math.max(0,Math.floor(a.y)),ex=Math.min(W,Math.ceil(a.x+a.w)),ey=Math.min(H,Math.ceil(a.y+a.h)),step=Math.max(2,Math.round(a.block));
+        for(let y=by;y<ey;y+=step)for(let x=bx;x<ex;x+=step){
+          const bw=Math.min(step,ex-x),bh=Math.min(step,ey-y);if(bw<=0||bh<=0)continue;
+          const data=sctx.getImageData(x,y,bw,bh).data;let r=0,g=0,bl=0;
+          for(let j=0;j<data.length;j+=4){r+=data[j];g+=data[j+1];bl+=data[j+2];}
+          const n=data.length/4;target.fillStyle='rgb('+Math.round(r/n)+','+Math.round(g/n)+','+Math.round(bl/n)+')';target.fillRect(x,y,bw,bh);
+        }
+      });
+      all.filter(a=>a.type==='highlight').forEach(a=>{target.save();target.globalAlpha=80/255;target.fillStyle=a.colour;target.fillRect(a.x,a.y,a.w,a.h);target.restore();});
+      all.filter(a=>a.type==='redact').forEach(a=>{target.fillStyle='#23272b';target.fillRect(a.x,a.y,a.w,a.h);});
+      if(withSelection){
+        const a=selected();
+        if(a){target.save();target.strokeStyle='#275adf';target.lineWidth=2.4;target.setLineDash([7,4]);target.strokeRect(a.x-3,a.y-3,a.w+6,a.h+6);target.setLineDash([]);[[a.x,a.y],[a.x+a.w,a.y],[a.x,a.y+a.h],[a.x+a.w,a.y+a.h]].forEach(p=>{target.fillStyle='#fff';target.fillRect(p[0]-4,p[1]-4,8,8);target.strokeRect(p[0]-4,p[1]-4,8,8);});target.restore();}
+        if(gesture&&gesture.kind==='draw'){const a=gesture.preview;target.save();target.strokeStyle='#275adf';target.lineWidth=2;target.setLineDash([6,4]);target.strokeRect(a.x,a.y,a.w,a.h);target.restore();}
+      }
+    }
+    function renderStatus(){ $('status-text').textContent=model.notice;$('status-message').classList.toggle('error',model.error); }
+    function render(){
+      const editing=model.view==='editor';
+      $('toolrail').hidden=!editing;$('inspector').hidden=!editing;
+      $('stage-toolbar').hidden=!editing;$('canvas-wrap').hidden=!editing;$('canvas-caption').hidden=!editing;
+      $('empty-stage').hidden=model.view!=='empty';$('session-review').hidden=model.view!=='sessionReview';
+      ['copy-action','save-action','close-action'].forEach(id=>$(id).disabled=!editing);
+      $('doc-state').hidden=!editing;
+      $('doc-state').innerHTML=unsaved()?'<i class="dirty-dot"></i>Not saved':'<span>'+icon('check')+'</span>Saved · simulated';
+      $('document-title').textContent=editing?(model.origin==='session'?'Spring campaign review / Capture 0'+sessionFrame:'Spring campaign · Screenshot'):model.view==='sessionReview'?'Spring campaign review':'Screenshot';
+      $('undo-action').disabled=!history.length;$('redo-action').disabled=!future.length;
+      document.querySelectorAll('[data-tool]').forEach(el=>el.setAttribute('aria-pressed',String(el.dataset.tool===model.tool)));
+      const type=model.tool;
+      $('stage-hint').textContent=type==='select'?'Select a mark to adjust it.':type==='highlight'?'Drag to highlight · Escape cancels a gesture':type==='pixelate'?'Drag to pixelate · Larger blocks obscure more detail':'Drag to redact · A solid cover for the selected area';
+      canvas.style.cursor=type==='select'?'default':'crosshair';
+      if(editing){drawScene(ctx,true);renderInspector();}
+      if(model.view==='sessionReview')renderSession();
+      renderStatus();
+      requestAnimationFrame(fitAll);
+    }
+    function renderInspector(){
+      const a=selected(),type=a?a.type:model.tool;
+      let html='<div class="eyebrow">'+(a?'Selected mark':model.tool==='select'?'Screenshot':'Tool properties')+'</div>';
+      html+='<h2>'+(a?'Selected '+labelFor(a.type):model.tool==='select'?'Make the point.':'Next '+labelFor(model.tool))+'</h2>';
+      html+='<p>'+(a?'Changes affect this mark only.':model.tool==='select'?'Choose a tool to add emphasis, or select a mark to adjust it.':'These settings apply to the next mark you draw.')+'</p>';
+      if(type==='highlight'){
+        const colour=a?a.colour:model.nextColour;
+        html+='<div class="property-section"><span class="property-title">Highlight colour</span><div class="swatches" role="group" aria-label="Highlight colour presets">';
+        SWATCHES.forEach(s=>{html+='<button class="swatch" data-colour="'+s[1]+'" aria-label="'+s[0]+'" aria-pressed="'+(s[1]===colour)+'"><span class="colour-disc" style="--swatch:'+s[1]+'">'+icon('check')+'</span>'+s[0]+'</button>';});
+        html+='</div><button class="secondary custom-colour" id="custom-colour"><span class="custom-chip" style="background:'+colour+'"></span>Custom colour…</button><p class="property-footnote">Translucent highlight · Fixed 80/255 opacity</p></div>';
+      }
+      if(type==='pixelate'){
+        const block=a?a.block:model.nextBlock;
+        html+='<div class="property-section"><div class="value-line"><label class="property-title" for="block-range">Block size</label><input type="number" id="block-number" min="2" max="128" value="'+block+'" aria-label="Pixelation block size in original-image pixels" aria-describedby="block-error"></div><input type="range" id="block-range" min="2" max="128" value="'+block+'" aria-label="Pixelation block size"><div class="range-labels"><span>Fine · 2 px</span><span>Coarse · 128 px</span></div><p id="block-error" class="field-error" hidden>Use a whole number from 2 to 128.</p><p class="property-footnote">Pixels in the original image. Larger blocks hide more detail.</p></div><div class="property-section"><p style="margin:0">Pixelation reduces detail.<br>Use Redact for a solid cover.</p></div>';
+      }
+      if(type==='redact')html+='<div class="property-section"><span class="property-title">Solid cover</span><div style="height:32px;background:#23272b;border-radius:5px"></div><p class="property-footnote">Opaque redactions render above other marks. Original files remain unchanged.</p></div>';
+      if(model.tool!=='select'){
+        html+='<div class="property-section"><button class="secondary wide" id="example-region">'+icon('rectangle')+'Add example region</button><button class="wide" id="cancel-tool">'+icon('cancel')+'Cancel tool</button><p class="property-footnote">Exit the tool without removing completed marks. Escape works too.</p></div>';
+      }
+      if(a){
+        html+='<div class="property-section"><span class="property-title">Position</span><div class="info-row"><span>Area</span><span>'+Math.round(a.w)+' × '+Math.round(a.h)+' px</span></div><div class="nudge" role="group" aria-label="Nudge selected mark"><button class="secondary" data-nudge="-1,0" aria-label="Move left 1 pixel">'+icon('left')+'</button><button class="secondary" data-nudge="0,-1" aria-label="Move up 1 pixel">'+icon('up')+'</button><button class="secondary" data-nudge="0,1" aria-label="Move down 1 pixel">'+icon('down')+'</button><button class="secondary" data-nudge="1,0" aria-label="Move right 1 pixel">'+icon('right')+'</button></div><button class="wide danger" id="delete-mark">'+icon('trash')+'Delete selected mark</button></div>';
+      }
+      if(model.annos.length){
+        html+='<div class="property-section"><span class="property-title">Marks <span style="color:#858a81;font-weight:400">('+model.annos.length+')</span></span><div class="annotation-list">';
+        model.annos.forEach((m,i)=>{html+='<button data-select="'+m.id+'" aria-pressed="'+(m.id===model.selected)+'">'+icon(m.type)+'<span>'+labelFor(m.type).replace(/^./,c=>c.toUpperCase())+' '+(i+1)+'</span></button>';});
+        html+='</div></div>';
+      }else if(model.tool==='select'){
+        html+='<div class="property-section"><span class="property-title">Image</span><div class="info-row"><span>Dimensions</span><span>1200 × 750 px</span></div><div class="info-row"><span>Source</span><span>Synthetic sample</span></div><div class="info-row"><span>Save state</span><span>'+(unsaved()?'Not saved':'Saved simulation')+'</span></div></div><div class="property-section"><span class="property-title">A little guidance</span><p style="margin:0">Highlight an idea. Pixelate a detail. Keep the screenshot in focus.</p></div>';
+      }
+      $('inspector').innerHTML=html;
+      $('inspector').querySelectorAll('[data-colour]').forEach(btn=>btn.addEventListener('click',()=>chooseColour(btn.dataset.colour)));
+      if($('custom-colour'))$('custom-colour').onclick=openColour;
+      if($('block-range')){
+        $('block-range').addEventListener('pointerdown',beginProperty);
+        $('block-range').addEventListener('keydown',e=>{if(['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','Home','End','PageUp','PageDown'].includes(e.key))beginProperty();});
+        $('block-range').addEventListener('input',e=>setBlock(Number(e.target.value),false));
+        $('block-range').addEventListener('change',finishProperty);
+        $('block-number').addEventListener('input',e=>{const v=Number(e.target.value),valid=e.target.value!==''&&Number.isInteger(v)&&v>=2&&v<=128;$('block-error').hidden=valid;e.target.setAttribute('aria-invalid',String(!valid));if(valid)setBlock(v,false);});
+        $('block-number').addEventListener('keydown',e=>{
+          if(e.key!=='Enter')return;
+          e.preventDefault();
+          if(e.target.getAttribute('aria-invalid')==='true'){notify('Use a whole number from 2 to 128. The last valid value is retained.',true);return;}
+          finishProperty();
+        });
+        $('block-number').addEventListener('change',finishProperty);
+        $('block-number').addEventListener('blur',()=>{if(propertyTxn)finishProperty();});
+      }
+      if($('example-region'))$('example-region').onclick=addExample;
+      if($('cancel-tool'))$('cancel-tool').onclick=cancelTool;
+      if($('delete-mark'))$('delete-mark').onclick=deleteSelected;
+      $('inspector').querySelectorAll('[data-nudge]').forEach(btn=>btn.onclick=()=>{const d=btn.dataset.nudge.split(',').map(Number);nudge(d[0],d[1]);});
+      $('inspector').querySelectorAll('[data-select]').forEach(btn=>btn.onclick=()=>{model.selected=Number(btn.dataset.select);model.tool='select';render();$('inspector').querySelector('[data-select="'+model.selected+'"]').focus();});
+    }
+    function loadSample(origin,fresh){
+      model.view='editor';model.origin=origin||'standalone';model.tool='select';model.annos=[];model.selected=null;model.fileSaved=!fresh;model.savedFingerprint='[]';
+      history=[];future=[];gesture=null;propertyTxn=null;idCounter=1;
+      notify(fresh?'Synthetic capture opened. Save a PNG to keep it.':'Synthetic sample opened. No real file was read.');render();
+    }
+    function makeAnno(type,rect){return {id:idCounter++,type,x:rect.x,y:rect.y,w:rect.w,h:rect.h,colour:model.nextColour,block:model.nextBlock};}
+    function addExample(){
+      if(model.tool==='select')return;
+      const before=snapshot(),n=model.annos.length;
+      const rect=model.tool==='highlight'?{x:57,y:135+n*4,w:575,h:53}:model.tool==='pixelate'?{x:790,y:622,w:355,h:43}:{x:61,y:638,w:459,h:26};
+      const a=makeAnno(model.tool,rect);model.annos.push(a);model.selected=a.id;commit(before);
+      notify('Example '+labelFor(a.type)+' added. Select it to adjust, or Undo to remove it.');$('artboard').focus();
+    }
+    function chooseColour(colour){
+      const a=selected(),before=snapshot();
+      if(a&&a.type==='highlight'){a.colour=colour;commit(before);}else{model.nextColour=colour;render();}
+      notify(a?'Selected highlight updated. Next-highlight defaults are unchanged.':'Next highlight colour updated. The screenshot is unchanged.');
+      $('inspector').querySelector('[data-colour="'+colour+'"]')?.focus();
+    }
+    function beginProperty(){if(!propertyTxn)propertyTxn={before:snapshot(),nextBlock:model.nextBlock,selected:model.selected};}
+    function setBlock(v){
+      beginProperty();const a=selected();if(a&&a.type==='pixelate')a.block=v;else model.nextBlock=v;
+      if($('block-range'))$('block-range').value=v;
+      if($('block-number')&&document.activeElement!==$('block-number'))$('block-number').value=v;
+      drawScene(ctx,true);$('doc-state').innerHTML=unsaved()?'<i class="dirty-dot"></i>Not saved':'Saved · simulated';
+    }
+    function finishProperty(){
+      if(!propertyTxn)return;
+      const invalid=$('block-number')?.getAttribute('aria-invalid')==='true';
+      const before=propertyTxn.before;propertyTxn=null;const focus=document.activeElement?.id;
+      commit(before);if(focus&&$(focus))$(focus).focus();
+      notify(invalid?'Invalid block size rejected. The last valid value is retained.':selected()?'Selected pixelation updated. One adjustment, one undo step.':'Next pixelation block size updated. The screenshot is unchanged.');
+    }
+    function cancelProperty(){
+      if(!propertyTxn)return;
+      model.annos=clone(propertyTxn.before.annos);model.selected=propertyTxn.before.selected;model.nextBlock=propertyTxn.nextBlock;propertyTxn=null;render();notify('Adjustment cancelled. The previous block size is restored.');$('block-range')?.focus();
+    }
+    function openDialog(id,focusId){returnFocus=document.activeElement;$(id).showModal();if(focusId)$(focusId).focus();}
+    function hideDialog(id){$(id).close();if(returnFocus&&document.contains(returnFocus))returnFocus.focus();}
+    function openColour(){
+      const a=selected();colourTxn={before:snapshot(),nextColour:model.nextColour,id:a&&a.type==='highlight'?a.id:null};
+      const col=colourTxn.id?a.colour:model.nextColour;
+      $('colour-picker').value=col;$('colour-hex').value=col.toUpperCase();$('hex-error').hidden=true;$('apply-colour').disabled=false;
+      $('colour-target').textContent=colourTxn.id?'Preview a colour for the selected highlight. Next-highlight defaults stay unchanged.':'Choose the colour for your next highlight. Existing marks stay unchanged.';
+      openDialog('colour-dialog','colour-picker');
+    }
+    function previewColour(col){
+      if(!colourTxn)return;
+      if(colourTxn.id){const a=model.annos.find(a=>a.id===colourTxn.id);if(a)a.colour=col;}else model.nextColour=col;
+      $('colour-picker').value=col;drawScene(ctx,true);
+    }
+    function finishColour(apply){
+      if(!colourTxn)return;
+      const txn=colourTxn;colourTxn=null;
+      if(!apply){model.annos=clone(txn.before.annos);model.selected=txn.before.selected;model.nextColour=txn.nextColour;}
+      hideDialog('colour-dialog');if(apply)commit(txn.before);else render();$('custom-colour')?.focus();
+      notify(apply?(txn.id?'Selected highlight colour applied.':'Next highlight colour applied.'):'Colour change cancelled. The opening value is restored.');
+    }
+    function deleteSelected(){const a=selected();if(!a)return;const before=snapshot();model.annos=model.annos.filter(x=>x.id!==a.id);model.selected=null;commit(before);notify('Mark removed. Undo brings it back.');$('artboard').focus();}
+    function nudge(dx,dy){const a=selected();if(!a)return;const before=snapshot();a.x=Math.min(W-a.w,Math.max(0,a.x+dx));a.y=Math.min(H-a.h,Math.max(0,a.y+dy));commit(before);notify('Selected mark moved by 1 original-image pixel.');$('artboard').focus();}
+    function undo(){if(!history.length)return;future.push(snapshot());const prev=history.pop();model.annos=clone(prev.annos);model.selected=prev.selected;render();notify('Last edit undone.');}
+    function redo(){if(!future.length)return;history.push(snapshot());const next=future.pop();model.annos=clone(next.annos);model.selected=next.selected;render();notify('Edit restored.');}
+    function cancelTool(){if(gesture){cancelGesture();return;}if(propertyTxn){cancelProperty();return;}model.tool='select';model.selected=null;render();notify('Tool exited. Completed marks are unchanged.');document.querySelector('[data-tool="select"]').focus();}
+    function point(e,c){const r=c.getBoundingClientRect();return {x:Math.max(0,Math.min(W,(e.clientX-r.left)*W/r.width)),y:Math.max(0,Math.min(H,(e.clientY-r.top)*H/r.height))};}
+    function rectBetween(p,q){return {x:Math.min(p.x,q.x),y:Math.min(p.y,q.y),w:Math.abs(p.x-q.x),h:Math.abs(p.y-q.y)};}
+    function hit(p){const list=model.annos.filter(a=>a.type!=='redact').concat(model.annos.filter(a=>a.type==='redact'));return list.slice().reverse().find(a=>p.x>=a.x&&p.x<=a.x+a.w&&p.y>=a.y&&p.y<=a.y+a.h);}
+    canvas.addEventListener('pointerdown',e=>{
+      if(e.button!==0||model.view!=='editor')return;
+      canvas.focus();const p=point(e,canvas);
+      if(model.tool==='select'){
+        const a=hit(p);model.selected=a?a.id:null;
+        if(a)gesture={kind:'move',start:p,before:snapshot(),id:a.id,original:{x:a.x,y:a.y},moved:false};
+        render();
+      }else gesture={kind:'draw',start:p,before:snapshot(),preview:makeAnno(model.tool,{x:p.x,y:p.y,w:0,h:0})};
+      canvas.setPointerCapture(e.pointerId);e.preventDefault();
+    });
+    canvas.addEventListener('pointermove',e=>{
+      if(!gesture)return;const p=point(e,canvas);
+      if(gesture.kind==='draw')Object.assign(gesture.preview,rectBetween(gesture.start,p));
+      else {const a=model.annos.find(a=>a.id===gesture.id);if(a){a.x=Math.max(0,Math.min(W-a.w,gesture.original.x+p.x-gesture.start.x));a.y=Math.max(0,Math.min(H-a.h,gesture.original.y+p.y-gesture.start.y));gesture.moved=true;}}
+      drawScene(ctx,true);
+    });
+    canvas.addEventListener('pointerup',e=>{
+      if(!gesture)return;const g=gesture;gesture=null;
+      if(g.kind==='draw'){
+        if(g.preview.w>=2&&g.preview.h>=2){model.annos.push(g.preview);model.selected=g.preview.id;commit(g.before);notify('New '+labelFor(g.preview.type)+' added. Undo reverses it.');}
+        else {render();notify('Select an area at least 2 × 2 source pixels.');}
+      }else commit(g.before);
+      if(canvas.hasPointerCapture(e.pointerId))canvas.releasePointerCapture(e.pointerId);
+    });
+    canvas.addEventListener('pointercancel',()=>cancelGesture());
+    function cancelGesture(){if(!gesture)return;const before=gesture.before;gesture=null;model.annos=clone(before.annos);model.selected=before.selected;render();notify('Gesture cancelled. Earlier edits are unchanged.');}
+    function requestClose(){
+      if(propertyTxn)finishProperty();if(gesture)cancelGesture();
+      if(!unsaved()){finishClose();return;}
+      $('close-title').textContent=model.fileSaved?'Save changes before closing?':'Save this screenshot before closing?';
+      $('close-description').textContent=model.fileSaved?'Keep a PNG copy of your changes, or discard this unsaved work. Framecraft will stay open.':'Keep a PNG copy of your result, or discard this unsaved screenshot. Framecraft will stay open.';
+      openDialog('close-dialog','cancel-close');
+    }
+    function finishClose(){
+      const origin=model.origin;
+      model.view=origin==='session'?'sessionReview':'empty';model.annos=[];model.selected=null;model.tool='select';history=[];future=[];gesture=null;propertyTxn=null;colourTxn=null;render();
+      notify(origin==='session'?'Screenshot closed. Returned to the saved session; collection state is unchanged.':'Screenshot closed. Framecraft is ready for the next capture.');
+      (origin==='session'?document.querySelector('[data-session-open="'+sessionFrame+'"]'):$('empty-capture'))?.focus();
+    }
+    function save(options){
+      options=options||{};
+      if($('simulate-failure').checked){
+        $('simulate-failure').checked=false;closeAfterRetry=!!options.close;replaceAfterRetry=!!options.replace;
+        if($('close-dialog').open)$('close-dialog').close();if($('replace-dialog').open)$('replace-dialog').close();
+        notify('Simulated save failed. Your screenshot and edits are retained.',true);openDialog('failure-dialog','keep-editing');return;
+      }
+      model.fileSaved=true;model.savedFingerprint=fingerprint();
+      if($('close-dialog').open)$('close-dialog').close();if($('replace-dialog').open)$('replace-dialog').close();
+      if(options.close){finishClose();notify('Save and close simulated. No file was written; Framecraft stays open.');}
+      else if(options.replace){startCapture();notify('Save simulated; no file was written. Choose a synthetic capture area.');}
+      else{render();notify('Save simulated. This revision is marked saved in the prototype; no file was written.');}
+    }
+    function requestCapture(){
+      if(model.view==='editor'&&unsaved()){openDialog('replace-dialog','cancel-replace');return;}
+      startCapture();
+    }
+    function startCapture(){
+      captureTxn={view:model.view,notice:model.notice,start:null,preview:null};
+      $('capture-overlay').hidden=false;isolateCapture(true);drawCapture();requestAnimationFrame(fitAll);$('capture-example').focus();notify('Capture selection simulation. Drag a synthetic area or use the example button.');
+    }
+    function drawCapture(){
+      capCtx.clearRect(0,0,W,H);capCtx.drawImage(base,0,0);capCtx.fillStyle='#25332760';capCtx.fillRect(0,0,W,H);
+      if(captureTxn&&captureTxn.preview){const r=captureTxn.preview;capCtx.drawImage(base,r.x,r.y,r.w,r.h,r.x,r.y,r.w,r.h);capCtx.strokeStyle='#fff';capCtx.lineWidth=3;capCtx.setLineDash([8,5]);capCtx.strokeRect(r.x,r.y,r.w,r.h);capCtx.setLineDash([]);}
+    }
+    function cancelCapture(){if(!captureTxn)return;captureTxn=null;$('capture-overlay').hidden=true;isolateCapture(false);render();notify('Capture cancelled. Your previous screenshot is unchanged.');$('capture-action').focus();}
+    function completeCapture(){
+      if(!captureTxn)return;captureTxn=null;$('capture-overlay').hidden=true;isolateCapture(false);
+      loadSample('standalone',true);notify('Synthetic area captured. The full fixture is used here; native capture and cropping are not performed.');$('artboard').focus();
+    }
+    capCanvas.addEventListener('pointerdown',e=>{if(!captureTxn||e.button!==0)return;captureTxn.start=point(e,capCanvas);captureTxn.preview=null;capCanvas.setPointerCapture(e.pointerId);});
+    capCanvas.addEventListener('pointermove',e=>{if(!captureTxn||!captureTxn.start)return;captureTxn.preview=rectBetween(captureTxn.start,point(e,capCanvas));drawCapture();});
+    capCanvas.addEventListener('pointerup',e=>{if(!captureTxn||!captureTxn.start)return;if(captureTxn.preview&&captureTxn.preview.w>=2&&captureTxn.preview.h>=2)completeCapture();else{captureTxn.start=null;notify('Drag an area, or use Capture example area.');}if(capCanvas.hasPointerCapture(e.pointerId))capCanvas.releasePointerCapture(e.pointerId);});
+    function renderSession(){
+      $('session-grid').innerHTML=[1,2,3].map((n)=>'<article class="session-card"><canvas class="session-thumb" width="400" height="250" aria-label="Synthetic campaign screenshot '+n+'"></canvas><strong>Capture 0'+n+'</strong><p>Original screenshot · Synthetic fixture</p><button class="secondary small" data-session-open="'+n+'">'+icon('open')+'Edit image</button></article>').join('');
+      document.querySelectorAll('.session-thumb').forEach(c=>c.getContext('2d').drawImage(base,0,0,400,250));
+      document.querySelectorAll('[data-session-open]').forEach(btn=>btn.onclick=()=>{sessionFrame=Number(btn.dataset.sessionOpen);loadSample('session',false);notify('Saved-session image opened. Close screenshot returns to review.');});
+    }
+    function applyScenario(name){
+      const valid=['empty','editor','capture','highlight','pixelate','close','save-error','session'];if(!valid.includes(name))name='editor';
+      scenarioApplying=true;document.querySelectorAll('dialog[open]').forEach(d=>d.close());$('capture-overlay').hidden=true;isolateCapture(false);
+      gesture=null;propertyTxn=null;colourTxn=null;captureTxn=null;closeAfterRetry=false;replaceAfterRetry=false;$('simulate-failure').checked=false;
+      model.nextColour='#ffd447';model.nextBlock=12;sessionFrame=2;loadSample(name==='session'?'session':'standalone',true);
+      if(name==='empty'){model.view='empty';render();notify('Ready for a synthetic capture.');}
+      if(name==='capture'){model.view='empty';render();startCapture();}
+      if(name==='highlight'){model.tool='highlight';addExample();model.tool='select';render();notify('Selected highlight. Change its colour without changing the next-highlight defaults.');}
+      if(name==='pixelate'){model.tool='pixelate';addExample();model.tool='select';render();notify('Selected pixelation. Adjust block size to see the effect.');}
+      if(name==='close'){model.tool='highlight';addExample();model.tool='select';render();requestClose();}
+      if(name==='save-error'){model.tool='highlight';addExample();model.tool='select';render();$('simulate-failure').checked=true;save();}
+      if(name==='session'){model.fileSaved=true;model.savedFingerprint=fingerprint();render();notify('A saved-session image. Close screenshot returns to session review.');}
+      $('scenario').value=name;scenarioApplying=false;
+    }
+    function scenarioChange(name){if(location.hash.slice(1)===name)applyScenario(name);else location.hash=name;}
+    $('scenario').onchange=e=>scenarioChange(e.target.value);
+    $('reset-scenario').onclick=()=>applyScenario($('scenario').value);
+    window.addEventListener('hashchange',()=>applyScenario(location.hash.slice(1)));
+    document.querySelectorAll('[data-tool]').forEach(btn=>btn.onclick=()=>{
+      if(propertyTxn)finishProperty();if(gesture)cancelGesture();model.tool=btn.dataset.tool;model.selected=null;render();notify(model.tool==='select'?'Selection mode. Choose a mark on the canvas or in the list.':'Drawing '+labelFor(model.tool)+'. Next-tool properties are shown.');document.querySelector('[data-tool="'+model.tool+'"]').focus();
+    });
+    $('capture-action').onclick=requestCapture;$('empty-capture').onclick=startCapture;$('capture-window').onclick=startCapture;$('capture-screen').onclick=()=>{startCapture();completeCapture();};
+    $('open-image').onclick=()=>{loadSample('standalone',false);notify('Open image simulated using the synthetic sample. No file picker was opened.');};
+    $('load-sample').onclick=()=>{loadSample('standalone',true);$('artboard').focus();};
+    $('copy-action').onclick=()=>notify('Copy simulated. Clipboard unchanged; this does not save the screenshot.');
+    $('save-action').onclick=()=>{if(propertyTxn)finishProperty();save();};
+    $('close-action').onclick=requestClose;$('undo-action').onclick=undo;$('redo-action').onclick=redo;
+    $('cancel-close').onclick=()=>{hideDialog('close-dialog');notify('Close cancelled. Your screenshot and edits are retained.');};
+    $('discard-close').onclick=()=>{$('close-dialog').close();finishClose();};
+    $('save-close').onclick=()=>save({close:true});
+    $('cancel-capture').onclick=cancelCapture;$('capture-example').onclick=completeCapture;
+    $('cancel-replace').onclick=()=>{hideDialog('replace-dialog');notify('New capture cancelled. Your existing screenshot is unchanged.');};
+    $('discard-replace').onclick=()=>{$('replace-dialog').close();startCapture();};
+    $('save-replace').onclick=()=>save({replace:true});
+    $('keep-editing').onclick=()=>{hideDialog('failure-dialog');closeAfterRetry=false;replaceAfterRetry=false;render();notify('Keep editing. The failed save did not discard your work.');$('artboard').focus();};
+    $('retry-save').onclick=()=>{$('failure-dialog').close();const close=closeAfterRetry,replace=replaceAfterRetry;closeAfterRetry=false;replaceAfterRetry=false;save({close,replace});};
+    $('colour-picker').addEventListener('input',e=>{$('colour-hex').value=e.target.value.toUpperCase();$('hex-error').hidden=true;$('apply-colour').disabled=false;previewColour(e.target.value);});
+    $('colour-hex').addEventListener('input',e=>{const raw=e.target.value,valid=/^#[0-9a-fA-F]{6}$/.test(raw);$('hex-error').hidden=valid;$('apply-colour').disabled=!valid;if(valid)previewColour(raw.toLowerCase());});
+    $('cancel-colour').onclick=()=>finishColour(false);$('apply-colour').onclick=()=>finishColour(true);
+    $('open-notes').onclick=()=>openDialog('notes-dialog','close-notes');$('close-notes').onclick=()=>hideDialog('notes-dialog');
+    $('more-tools').onclick=()=>{openDialog('notes-dialog','close-notes');$('notes-title').focus();};
+    $('icon-sheet').innerHTML=[['capture','Capture Area'],['window','Capture Window'],['screen','Capture Screen'],['select','Select'],['crop','Crop'],['arrow','Arrow'],['rectangle','Rectangle'],['pen','Freehand'],['highlight','Highlight'],['pixelate','Pixelate'],['redact','Redact'],['text','Text'],['step','Step'],['copy','Copy image'],['save','Save PNG'],['close','Close screenshot']].map(x=>'<span>'+icon(x[0])+x[1]+'</span>').join('');
+    document.querySelectorAll('dialog').forEach(d=>d.addEventListener('cancel',e=>{
+      e.preventDefault();
+      if(d.id==='colour-dialog')finishColour(false);
+      else if(d.id==='close-dialog')$('cancel-close').click();
+      else if(d.id==='failure-dialog')$('keep-editing').click();
+      else if(d.id==='replace-dialog')$('cancel-replace').click();
+      else hideDialog(d.id);
+    }));
+    document.addEventListener('keydown',e=>{
+      if(document.querySelector('dialog[open]'))return;
+      if(captureTxn){
+        if(e.key==='Escape'){e.preventDefault();cancelCapture();}
+        if(e.key==='Tab'){
+          const stops=[$('cancel-capture'),capCanvas,$('capture-example')],index=stops.indexOf(document.activeElement);
+          if((e.shiftKey&&index<=0)||(!e.shiftKey&&index===stops.length-1)||index<0){e.preventDefault();(e.shiftKey?stops[stops.length-1]:stops[0]).focus();}
+        }
+        return;
+      }
+      if(e.key==='Escape'){
+        e.preventDefault();
+        if(gesture)cancelGesture();
+        else if(propertyTxn)cancelProperty();
+        else if(document.activeElement?.id==='block-number'&&$('block-number').getAttribute('aria-invalid')==='true'){
+          $('block-number').value=selected()?.block||model.nextBlock;$('block-number').setAttribute('aria-invalid','false');$('block-error').hidden=true;notify('Invalid number edit cancelled. The last valid block size is retained.');
+        }
+        else if(model.view==='editor')cancelTool();
+        return;
+      }
+      const textControl=/^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement?.tagName||'');
+      if(textControl||model.view!=='editor')return;
+      if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='z'){e.preventDefault();e.shiftKey?redo():undo();}
+      else if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='s'){e.preventDefault();save();}
+      else if((e.key==='Backspace'||e.key==='Delete')&&selected()){e.preventDefault();deleteSelected();}
+      else if(selected()&&['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(e.key)){e.preventDefault();const d={ArrowLeft:[-1,0],ArrowRight:[1,0],ArrowUp:[0,-1],ArrowDown:[0,1]}[e.key];nudge(d[0],d[1]);}
+    });
+    applyScenario(location.hash.slice(1)||'editor');
+  </script>
+</body>
+</html>
