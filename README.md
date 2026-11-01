@@ -1,8 +1,8 @@
-# Framecraft 0.3.0-beta.3 (development)
+# Framecraft 0.3.0-beta.4 (development)
 
 Capture an area of your Mac’s screen, annotate it, then copy or save the image. For meetings and presentations, collect a sequence of frames and return to it later. Images and OCR stay on your Mac.
 
-This branch contains the next editor iteration. Beta 3 is not published yet; the downloadable beta 2 does not include these changes. Use the source build below to test this branch.
+This branch contains the next editor iteration. Beta 4 is not published yet; the downloadable beta 2 does not include these changes. Use the source build below to test this branch.
 
 ## Install on your Mac
 

@@ -1,3 +1,19 @@
+# Screen access recovery verification: 0.3.0-beta.4
+
+1 November 2026. Fix for the reported `could not create image from rect` failure and inability to enable Framecraft. Source inspection found the preflight helper unused, no direct screen-capture permission request, and generic permission advice appended to every command failure. This establishes a missing recovery flow, not the cause of every rectangle failure or the affected Mac's TCC state.
+
+- `cargo test --locked --all-targets`: 166 passed (116 library, 39 app, 11 pixelation), 4 explicit tests ignored.
+- `cargo test --locked --no-default-features`: 123 passed, 4 ignored.
+- Strict Clippy passed with default and no-default features; formatting and diff checks passed.
+- Regression checks cover granted/not-granted/unknown gating, preservation of an edited document without starting capture, no automatic capture after permission checks, and rectangle diagnostics that do not assert permission denial.
+- Existing unsaved-capture routing test now injects permission status, so it does not depend on the test runner's real macOS permission. The initial run exposed that dependency; the deterministic retest passed.
+- Release bundle, strict ad-hoc signature and plist checks passed. DMG verification passed: `Framecraft-0.3.0-beta.4-macos-arm64.dmg`, SHA-256 `f3d1008bcca0995e434b9452301ef58d2d5f097632d6f4653b94e4903e5313bc`. The existing installed app was not replaced.
+- Native FFI declarations were checked against the installed macOS SDK. `CGRequestScreenCaptureAccess` is invoked only by the explicit Request Access button on the UI thread. Session/capture workers only preflight.
+
+The grant/deny/restart cycle and capture on the affected Mac remain unverified. No permissions were changed, no TCC reset was run and no screen content was captured during automated checks. The local build is ad-hoc signed; stable distribution identity and notarisation are still outstanding. Do not claim that unit tests prove the permission switch works on another Mac.
+
+---
+
 # Native editor development verification: 0.3.0-beta.3
 
 31 October 2026. This is unreleased implementation work for #23–#28, following the [native editor contract](specs/editor-native-experience.md). The installed beta 2 and its historical results below remain separate. No new installation, release, general macOS compatibility or completed story acceptance is claimed by this section.

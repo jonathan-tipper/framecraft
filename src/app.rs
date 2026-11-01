@@ -134,6 +134,8 @@ pub struct Framecraft {
     gesture_before: Option<Edits>,
     gesture_was_saved: bool,
     capture_cancel: Option<Arc<AtomicBool>>,
+    screen_access_open: bool,
+    screen_access_status: capture::PermissionStatus,
     saved_revision: u64,
     rendered_revision: Option<u64>,
     pending: Option<Pending>,
@@ -245,6 +247,8 @@ impl Framecraft {
             gesture_before: None,
             gesture_was_saved: false,
             capture_cancel: None,
+            screen_access_open: false,
+            screen_access_status: capture::PermissionStatus::Unknown,
             saved_revision: 0,
             rendered_revision: None,
             pending: None,
@@ -406,6 +410,14 @@ impl Framecraft {
         self.editor_mutation_allowed() && !self.session.active()
     }
     fn capture(&mut self, ctx: &egui::Context, mode: CaptureMode) {
+        self.capture_with_permission(ctx, mode, capture::permission_status);
+    }
+    fn capture_with_permission(
+        &mut self,
+        ctx: &egui::Context,
+        mode: CaptureMode,
+        status: impl FnOnce() -> capture::PermissionStatus,
+    ) {
         if !self.capture_available() {
             self.notify(
                 if self.session.active() {
@@ -417,7 +429,19 @@ impl Framecraft {
             );
             return;
         }
+        if cfg!(target_os = "macos") && !self.check_screen_access(status()) {
+            return;
+        }
         self.request(ctx, Pending::Capture(mode));
+    }
+    fn check_screen_access(&mut self, status: capture::PermissionStatus) -> bool {
+        self.screen_access_status = status;
+        if let Err(message) = capture::require_permission(status) {
+            self.screen_access_open = true;
+            self.notify(message, true);
+            return false;
+        }
+        true
     }
     fn capture_now(&mut self, ctx: &egui::Context, mode: CaptureMode) {
         // Recheck after an unsaved-edit prompt: a session may have started meanwhile.
@@ -436,6 +460,9 @@ impl Framecraft {
                 "Screen capture requires macOS. Import an image to use the editor here.",
                 true,
             );
+            return;
+        }
+        if !self.check_screen_access(capture::permission_status()) {
             return;
         }
         let cancel = Arc::new(AtomicBool::new(false));
@@ -1118,6 +1145,12 @@ impl Framecraft {
                         if ui.add_enabled(self.colour_dialog.is_none() && self.pending.is_none(),egui::Button::new("Keyboard Shortcuts…")).clicked() { self.open_settings(); }
                         ui.add_enabled_ui(self.capture_available(), |ui| {
                             ui.menu_button("More Capture", |ui| {
+                                if ui.button("Screen Access…").clicked() {
+                                    self.screen_access_open = true;
+                                    self.screen_access_status = capture::permission_status();
+                                    ui.close_menu();
+                                }
+                                ui.separator();
                                 for (label, mode) in [("Capture Window…", CaptureMode::Window), ("Capture Screen", CaptureMode::Screen)] {
                                     if ui.button(label).clicked() { ui.close_menu(); self.capture(ctx, mode); }
                                 }
@@ -1129,6 +1162,30 @@ impl Framecraft {
                         });
                     });
                 });
+                if self.screen_access_open {
+                    ui.separator();
+                    ui.heading("Screen Access");
+                    ui.label(capture::permission_guidance(self.screen_access_status));
+                    ui.add_enabled_ui(self.capture_available(), |ui| {
+                        ui.horizontal_wrapped(|ui| {
+                            if ui.button("Request Access").clicked() {
+                                self.screen_access_status = capture::request_permission();
+                            }
+                            if ui.button("Open System Settings").clicked() {
+                                if let Err(error) = capture::open_permission_settings() { self.notify(error, true); }
+                            }
+                            if ui.button("Check Again").clicked() {
+                                self.screen_access_status = capture::permission_status();
+                            }
+                            if ui.button("Close").clicked() { self.screen_access_open = false; }
+                        });
+                    });
+                    ui.label("After allowing access, quit and reopen Framecraft if macOS requests it. Capture starts only when you explicitly retry.");
+                    ui.collapsing("Which copy is running?", |ui| {
+                        if let Ok(path) = std::env::current_exe() { ui.label(path.display().to_string()); }
+                        ui.label("Use the copy in Applications. A Terminal or IDE launch can have a different permission identity. Updates to an ad-hoc-signed beta may require renewed approval.");
+                    });
+                }
                 if self.session.active() {
                     ui.add_space(6.0);
                     ui.label(RichText::new("A capture session is active. Stop it in Sessions before taking a separate screenshot.").small().color(MUTED));
@@ -2940,6 +2997,29 @@ mod tests {
         app.selected = Some(0);
         (ctx, app)
     }
+    #[test]
+    fn missing_permission_preserves_edits_and_opens_recovery_without_a_capture_job() {
+        let (_, mut app) = edited_fixture(Tool::Highlight);
+        let revision = app.revision;
+        let pixels = editor::render(app.doc.as_ref().unwrap()).unwrap();
+        for status in [
+            capture::PermissionStatus::NotGranted,
+            capture::PermissionStatus::Unknown,
+        ] {
+            assert!(!app.check_screen_access(status));
+            assert!(app.screen_access_open);
+            assert!(app.job.is_none());
+            assert!(app.capture_cancel.is_none());
+            assert!(app.pending.is_none());
+            assert_eq!(app.revision, revision);
+            assert_eq!(editor::render(app.doc.as_ref().unwrap()).unwrap(), pixels);
+        }
+        assert!(app.check_screen_access(capture::PermissionStatus::Granted));
+        assert!(
+            app.job.is_none(),
+            "permission checks never auto-start capture"
+        );
+    }
     fn complete(app: &mut Framecraft, ctx: &egui::Context, result: Result<Outcome, String>) {
         let (tx, rx) = mpsc::channel();
         app.job = Some(Job { rx });
@@ -3171,13 +3251,17 @@ mod tests {
         let mut app = Framecraft::with_context(&ctx, true);
         app.changed();
         app.page = Page::Session;
-        app.capture(&ctx, CaptureMode::Area);
+        app.capture_with_permission(&ctx, CaptureMode::Area, || {
+            capture::PermissionStatus::Granted
+        });
         assert!(matches!(
             app.pending,
             Some(Pending::Capture(CaptureMode::Area))
         ));
         assert!(app.job.is_none());
-        app.capture(&ctx, CaptureMode::Screen);
+        app.capture_with_permission(&ctx, CaptureMode::Screen, || {
+            capture::PermissionStatus::Granted
+        });
         assert!(matches!(
             app.pending,
             Some(Pending::Capture(CaptureMode::Area))

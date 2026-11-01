@@ -82,9 +82,52 @@ pub fn permission_status() -> PermissionStatus {
 pub fn permission_guidance(status: PermissionStatus) -> &'static str {
     match status {
         PermissionStatus::Granted => "Screen recording permission is granted. If capture fails, select an available source and retry.",
-        PermissionStatus::NotGranted => "Screen recording access is not granted. Open System Settings > Privacy & Security > Screen & System Audio Recording (Screen Recording on older macOS), allow Framecraft, then quit and reopen it. A development build may appear as Terminal or your IDE. Retry explicitly after fixing access.",
+        PermissionStatus::NotGranted => "Screen recording access is not granted to this running copy. Open Screen Access in Framecraft and choose Request Access. Then enable Framecraft in System Settings > Privacy & Security > Screen & System Audio Recording (Screen Recording on older macOS). If it is missing, use the + button to add /Applications/Framecraft.app. Quit and reopen that installed copy, then retry.",
         PermissionStatus::Unknown => "Framecraft could not determine screen recording permission. Check System Settings > Privacy & Security > Screen Recording, then retry explicitly.",
     }
+}
+
+/// Call only in response to the user's Request Access action, on the UI thread.
+/// macOS owns the prompt and approval; a false result is not proof of denial.
+pub fn request_permission() -> PermissionStatus {
+    #[cfg(target_os = "macos")]
+    {
+        #[link(name = "CoreGraphics", kind = "framework")]
+        unsafe extern "C" {
+            fn CGRequestScreenCaptureAccess() -> bool;
+        }
+        if unsafe { CGRequestScreenCaptureAccess() } {
+            PermissionStatus::Granted
+        } else {
+            permission_status()
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    PermissionStatus::Unknown
+}
+
+pub fn require_permission(status: PermissionStatus) -> Result<(), String> {
+    match status {
+        PermissionStatus::Granted => Ok(()),
+        _ => Err(permission_guidance(status).into()),
+    }
+}
+
+pub fn open_permission_settings() -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        let status = std::process::Command::new("/usr/bin/open")
+            .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")
+            .status()
+            .map_err(|e| format!("Could not open System Settings: {e}"))?;
+        if status.success() {
+            Ok(())
+        } else {
+            Err("Open System Settings > Privacy & Security > Screen & System Audio Recording manually.".into())
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    Err("Screen recording settings are available on macOS.".into())
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -270,6 +313,12 @@ fn run_capture(
     use std::os::unix::fs::PermissionsExt;
     use std::process::{Command, Stdio};
 
+    // Covers one-off and collection paths without prompting from a worker.
+    // Permission denial must not hide controls or start a capture subprocess.
+    if cancelled() {
+        return Ok(None);
+    }
+    require_permission(permission_status())?;
     let _hidden = HiddenControls::acquire()?;
     if cancelled() {
         return Ok(None);
@@ -410,13 +459,37 @@ fn classify_completion(
         diagnostic.chars().take(600).collect()
     };
     Err(format!(
-        "Screen capture failed. {detail} If macOS blocked access, open System Settings > Privacy & Security > Screen & System Audio Recording (Screen Recording on older macOS), allow Framecraft, then quit and reopen it. When using cargo run, macOS may list Terminal or your IDE instead."
+        "Screen capture failed. {detail} No new screenshot was loaded. Open Screen Access to check permission for this copy. If access is granted, retry with an available display or a non-empty area. This command error alone does not identify a permission problem."
     ))
 }
 
 #[cfg(test)]
 mod tests {
     use super::{classify_completion, command_args, CaptureMode};
+
+    #[test]
+    fn capture_requires_explicit_granted_status() {
+        use super::{require_permission, PermissionStatus};
+        assert!(require_permission(PermissionStatus::Granted).is_ok());
+        assert!(require_permission(PermissionStatus::NotGranted)
+            .unwrap_err()
+            .contains("Request Access"));
+        assert!(require_permission(PermissionStatus::Unknown).is_err());
+    }
+
+    #[test]
+    fn rect_failure_does_not_claim_permission_denied() {
+        let error = classify_completion(
+            CaptureMode::Area,
+            false,
+            false,
+            "could not create image from rect",
+        )
+        .unwrap_err();
+        assert!(error.contains("could not create image from rect"));
+        assert!(error.contains("does not identify a permission problem"));
+        assert!(!error.contains("Terminal"));
+    }
 
     #[test]
     fn pre_cancelled_capture_never_opens_native_selection() {

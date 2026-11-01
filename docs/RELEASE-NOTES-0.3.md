@@ -1,3 +1,9 @@
+# 0.3.0-beta.4: screen-access recovery (unreleased)
+
+Fixes the missing explicit screen-recording request flow. More Capture → Screen Access offers Request Access, Open System Settings and Check Again. One-off capture checks permission before hiding Framecraft; the shared capture adapter checks again before starting the native command, including session captures. Denied/unrequested access preserves the existing document and opens recovery. Command errors retain their diagnostic without asserting that every failure is a permission problem.
+
+No permission is approved automatically. The full first-grant/denial/restart cycle must be checked on the affected Mac. Ad-hoc signing and cross-build permission identity remain distribution limits. See [installation recovery](INSTALLATION.md#allow-capture) and [test evidence](TEST-NOTES.md).
+
 # 0.3.0-beta.3: editor experience (unreleased)
 
 Development implementation of [epic #22](https://github.com/jonathan-tipper/framecraft/issues/22), using the [reviewed design candidate](specs/editor-experience-prototype.md). No beta 3 release or notarised download is published by this change. Build the current branch using the README instructions.

@@ -144,3 +144,16 @@ This matrix covers #23–#28 against [the native contract](specs/editor-native-e
 For pixelation, unit fixtures must vary only hidden redacted/cropped source samples and compare all visible output pixels. Include transparent pixels with differing hidden RGB, partially transparent averages, block origins, clipped edges, overlap ordering and aggregate work limits. Resource-bound rejection should produce an actionable error rather than silently lowering quality.
 
 For UI changes, source or headless checks support regression diagnosis but do not establish native pointer interaction, VoiceOver or rendering at Retina scale. Keep every unperformed item explicit in TEST-NOTES and the owning issue.
+
+## Screen access recovery, beta 4
+
+Use an installed copy and record macOS version, build and executable path. Use synthetic screen content. Do not reset other applications' permissions.
+
+1. With access unavailable, click Capture Area. Framecraft must stay visible, retain the current image/edits and show Screen Access without starting a selector.
+2. Choose Request Access. Confirm the macOS prompt names the intended installed copy. The tester chooses Allow or denial; Framecraft cannot approve it.
+3. Denial must preserve the document. Check Again reads status without capturing. Open System Settings must open the recording privacy pane or show a useful fallback error.
+4. If absent, add `/Applications/Framecraft.app` using the privacy list's + button. Approve access, quit/reopen when requested, Check Again and explicitly retry capture. Test both Area and Screen with synthetic content.
+5. Record whether an ad-hoc update or different launch path requires approval again. Test the actual installed build, not only cargo/Terminal attribution.
+6. A failed/empty rectangle with granted access must retain its command diagnostic and must not assert that permission was denied. Original images remain unchanged.
+
+Record first-grant, denied, revoked, restart-required and already-granted cases separately. Managed-device restrictions and native system prompts need an actual Mac test, not mocks.
