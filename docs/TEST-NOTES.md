@@ -10,7 +10,15 @@
 - Release bundle, strict ad-hoc signature and plist checks passed. DMG verification passed: `Framecraft-0.3.0-beta.4-macos-arm64.dmg`, SHA-256 `f3d1008bcca0995e434b9452301ef58d2d5f097632d6f4653b94e4903e5313bc`. The existing installed app was not replaced.
 - Native FFI declarations were checked against the installed macOS SDK. `CGRequestScreenCaptureAccess` is invoked only by the explicit Request Access button on the UI thread. Session/capture workers only preflight.
 
-The grant/deny/restart cycle and capture on the affected Mac remain unverified. No permissions were changed, no TCC reset was run and no screen content was captured during automated checks. The local build is ad-hoc signed; stable distribution identity and notarisation are still outstanding. Do not claim that unit tests prove the permission switch works on another Mac.
+The automated checks did not change permissions, reset TCC or capture screen content. Native recovery was subsequently checked as recorded below. The local build is ad-hoc signed; stable distribution identity and notarisation are still outstanding. Unit tests do not prove approval works on another Mac.
+
+## Confirmed native permission recovery, 1 November 2026
+
+On macOS 26.6.2, System Settings showed Framecraft enabled while the app preflight reported no access. The macOS privacy log explicitly reported `Failed to match existing code requirement for subject dev.framecraft.app and service kTCCServiceScreenCapture`, with different saved and current code-directory hashes. The running process was the repository's `dist/Framecraft.app` copy. This confirms a signature mismatch in this incident; the rectangle error alone had not established it.
+
+The empty development instance was quit normally. After explicit user approval, `tccutil reset ScreenCapture dev.framecraft.app` succeeded. No other app's permissions were reset. `/Applications/Framecraft.app` was opened, its process path checked, and Request Access invoked. After reapproval/relaunch, the installed app's native preflight reported **Screen recording permission is granted**. [Native status evidence](evidence/beta4-native/access-granted.jpg).
+
+No source or binary rebuild was needed for this recovery. Actual area/window selection and capture after recovery have not yet been observed; do not equate a successful permission check with a completed capture. An ad-hoc rebuild that changes the binary can change its signing identity and require new consent.
 
 ---
 
