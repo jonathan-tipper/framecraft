@@ -6,6 +6,11 @@ use eframe::egui::{
 #[derive(Clone, Copy, Debug)]
 pub enum Icon {
     Capture,
+    Window,
+    Screen,
+    Folder,
+    Settings,
+    Keyboard,
     Select,
     Highlight,
     Pixelate,
@@ -26,16 +31,38 @@ pub enum Icon {
 
 /// One labelled hit target and one accessibility node; the strokes are decorative.
 pub fn button(ui: &mut egui::Ui, label: &str, icon: Icon, selected: bool) -> egui::Response {
+    sized_button(ui, label, icon, selected, None)
+}
+
+pub fn full_width(ui: &mut egui::Ui, label: &str, icon: Icon, selected: bool) -> egui::Response {
+    sized_button(ui, label, icon, selected, Some(ui.available_width()))
+}
+
+pub fn sized_button(
+    ui: &mut egui::Ui,
+    label: &str,
+    icon: Icon,
+    selected: bool,
+    width: Option<f32>,
+) -> egui::Response {
     let font = TextStyle::Button.resolve(ui.style());
     let galley = ui
         .painter()
         .layout_no_wrap(label.to_owned(), font, Color32::PLACEHOLDER);
-    let size = vec2(galley.size().x + 43.0, 34.0_f32.max(galley.size().y + 12.0));
+    let size = vec2(
+        width.unwrap_or(galley.size().x + 46.0),
+        36.0_f32.max(galley.size().y + 12.0),
+    );
     let (rect, response) = ui.allocate_at_least(size, Sense::click());
     response.widget_info(|| {
         if matches!(
             icon,
             Icon::Capture
+                | Icon::Window
+                | Icon::Screen
+                | Icon::Folder
+                | Icon::Settings
+                | Icon::Keyboard
                 | Icon::Undo
                 | Icon::Redo
                 | Icon::Copy
@@ -56,7 +83,7 @@ pub fn button(ui: &mut egui::Ui, label: &str, icon: Icon, selected: bool) -> egu
             visuals.bg_stroke
         };
         ui.painter()
-            .rect(rect, 6.0, visuals.weak_bg_fill, stroke, StrokeKind::Inside);
+            .rect(rect, 8.0, visuals.weak_bg_fill, stroke, StrokeKind::Inside);
         let colour = visuals.text_color();
         paint(
             ui.painter(),
@@ -109,6 +136,42 @@ fn paint(painter: &egui::Painter, rect: Rect, icon: Icon, colour: Color32) {
             path(&[(16., 21.), (21., 21.), (21., 16.)]);
             line((8., 12.), (16., 12.));
             line((12., 8.), (12., 16.));
+        }
+        Icon::Window => {
+            outline(2., 3., 20., 18.);
+            line((2., 8.), (22., 8.));
+            line((5., 5.5), (8., 5.5));
+        }
+        Icon::Screen => {
+            outline(2., 3., 20., 14.);
+            line((12., 17.), (12., 21.));
+            line((7., 21.), (17., 21.));
+        }
+        Icon::Folder => path(&[
+            (2., 7.),
+            (2., 4.),
+            (9., 4.),
+            (12., 7.),
+            (22., 7.),
+            (20., 20.),
+            (2., 20.),
+            (2., 7.),
+            (22., 7.),
+        ]),
+        Icon::Settings => {
+            for (y, x) in [(5., 8.), (12., 16.), (19., 10.)] {
+                line((3., y), (21., y));
+                painter.circle_filled(point(x, y), 2.5, colour);
+            }
+        }
+        Icon::Keyboard => {
+            outline(1., 5., 22., 14.);
+            for y in [9., 12.] {
+                for x in [5., 10., 15., 19.] {
+                    line((x, y), (x + 1., y));
+                }
+            }
+            line((7., 16.), (17., 16.));
         }
         Icon::Select => path(&[(5., 3.), (18., 12.), (12., 13.), (9., 20.), (5., 3.)]),
         Icon::Highlight => {

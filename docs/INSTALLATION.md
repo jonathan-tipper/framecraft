@@ -21,6 +21,14 @@ Do not override warnings about known malware or damaged software. Check the down
 
 macOS controls access to screen pixels. In **System Settings → Privacy & Security → Screen & System Audio Recording**, allow Framecraft. Older macOS versions call this **Screen Recording**. Quit and reopen Framecraft if requested, then explicitly retry the capture. The app cannot approve this permission for you.
 
+In beta 4 development builds, use **More Capture → Screen Access… → Request Access** to ask macOS for access from Framecraft itself. **Open System Settings** opens the relevant privacy pane. **Check Again** reads the current permission; it does not start a screenshot. A blocked capture opens this panel before hiding the window. Existing screenshots and edits remain available.
+
+If Framecraft is absent from the privacy list, use the **+** button and select `/Applications/Framecraft.app`. Quit other copies, including the one on a mounted DMG, and launch the installed app. If macOS requires a restart after approval, quit and reopen Framecraft before retrying. If the switch is unavailable on a managed Mac, ask its administrator about the screen-recording policy.
+
+These beta builds are ad-hoc signed. An updated binary or a different launch location can require approval again; a stable Developer ID distribution identity remains outstanding. Do not disable macOS protections or reset unrelated apps' permissions to work around this.
+
+The command error `could not create image from rect` alone does not prove denial. In the Screen Access panel, check this running copy's status. If granted, try a non-empty area on an available display; report the capture mode, macOS version and running-copy path if it still fails.
+
 Run the installed copy consistently. Starting a separate build from Terminal or an IDE can give it a different permission identity. The application identifier is `dev.framecraft.app`.
 
 ## Build and install locally

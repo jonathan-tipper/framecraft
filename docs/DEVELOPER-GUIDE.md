@@ -89,3 +89,10 @@ The [Mac experience specification](specs/0.3-mac-experience.md) supersedes the s
 The app reads the installed SFNS font when available and falls back to its bundled UI fonts. It does not redistribute Apple's font. New captures/imports start without added styling; the CLI renderer's established default style remains unchanged.
 
 Run `scripts/bundle-macos.sh`, `scripts/test-install-macos.sh`, then `scripts/package-macos.sh --skip-build`. Packaging verifies the bundle/version and writes a versioned DMG. `scripts/install-macos.sh` installs into Applications; updates require `--replace` and a stopped app. See [installation](INSTALLATION.md). App icon sources are in `packaging/make-icon.swift`; regenerate deliberately, never during an unrelated build. Preserve the macOS 13 deployment target and run native controls smoke after changing application menus.
+
+
+## Beta 5 setup and text changes
+
+See [everyday capture](specs/everyday-capture.md) for the UI/state contract. `--demo` skips automatic first-run setup; normal launch shows it until explicitly completed. Quick-capture preferences are separate from session shortcuts. Tests use temporary directories and injected outcomes; they must not register real global keys or change macOS privacy settings. Native testing should use synthetic images and a disposable folder. A preview bundle with a separate identifier can verify setup/text without replacing the installed app; it does not prove screen-access identity or background capture for the release bundle.
+
+The source build is ad-hoc signed. Rebuilding may change macOS permission identity. Do not rebuild an installed candidate between a permission grant and its capture acceptance run. Developer ID signing remains a release requirement for predictable distribution.

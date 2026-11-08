@@ -188,6 +188,7 @@ mod native {
         review: MenuItem,
         manager: GlobalHotKeyManager,
         keys: Option<[HotKey; 3]>,
+        quick_key: Option<HotKey>,
         menus: mpsc::Receiver<tray_icon::menu::MenuEvent>,
         hotkeys: mpsc::Receiver<GlobalHotKeyEvent>,
         visibility: mpsc::Receiver<(bool, mpsc::SyncSender<Result<(), String>>)>,
@@ -226,7 +227,7 @@ mod native {
             let cancel_capture = MenuItem::new("Cancel Capture", false, None);
             let close_screenshot = MenuItem::new("Close Screenshot", false, None);
             let settings = MenuItem::new(
-                "Keyboard Shortcuts…",
+                "Capture setup…",
                 true,
                 Some(Accelerator::new(Modifiers::META, Code::Comma)),
             );
@@ -367,6 +368,7 @@ mod native {
                 review,
                 manager,
                 keys: None,
+                quick_key: None,
                 menus,
                 hotkeys,
                 visibility,
@@ -420,6 +422,12 @@ mod native {
             }
             for event in self.hotkeys.try_iter() {
                 if event.state != HotKeyState::Pressed {
+                    continue;
+                }
+                if self.quick_key.is_some_and(|key| key.id() == event.id) {
+                    if self.capture_area.is_enabled() {
+                        actions.push(DesktopAction::CaptureArea);
+                    }
                     continue;
                 }
                 if let Some(keys) = self.keys {
@@ -507,6 +515,9 @@ mod native {
                 })
                 .collect::<Result<Vec<_>, _>>()?;
             let new: [HotKey; 3] = parsed.try_into().map_err(|_| "Expected three shortcuts.")?;
+            if self.quick_key.is_some_and(|key| new.contains(&key)) {
+                return Err("A session shortcut conflicts with your quick capture shortcut. Change it in Capture Setup first.".into());
+            }
             let previous = self.keys;
             replace_shortcuts(
                 previous.as_ref().map_or(&[], |keys| keys.as_slice()),
@@ -526,6 +537,40 @@ mod native {
             Ok(())
         }
 
+        /// One-off capture stays registered independently of a running session.
+        /// Register the replacement first so a conflict preserves the old key.
+        pub fn configure_quick_capture(&mut self, shortcut: Option<&str>) -> Result<(), String> {
+            let new = shortcut
+                .map(|value| {
+                    crate::quick_capture::canonical_quick_shortcut(value)?
+                        .parse::<HotKey>()
+                        .map_err(|_| {
+                            "This capture shortcut is not supported. Choose another combination."
+                                .to_string()
+                        })
+                })
+                .transpose()?;
+            if new.is_some_and(|key| self.keys.is_some_and(|keys| keys.contains(&key))) {
+                return Err("The capture shortcut is already used by a session command. Choose another combination.".into());
+            }
+            replace_shortcuts(
+                self.quick_key.as_slice(),
+                new.as_slice(),
+                |key| {
+                    self.manager
+                        .register(*key)
+                        .map_err(|_| "macOS could not register this key combination".to_string())
+                },
+                |key| {
+                    self.manager
+                        .unregister(*key)
+                        .map_err(|_| "macOS could not release this key combination".to_string())
+                },
+            )?;
+            self.quick_key = new;
+            Ok(())
+        }
+
         pub fn clear_shortcuts(&mut self) {
             if let Some(keys) = self.keys.take() {
                 let _ = self.manager.unregister_all(&keys);
@@ -541,6 +586,7 @@ mod native {
             }
             crate::capture::set_visibility_handler(None);
             self.clear_shortcuts();
+            let _ = self.configure_quick_capture(None);
             MenuEvent::set_event_handler(None::<fn(MenuEvent)>);
             GlobalHotKeyEvent::set_event_handler(None::<fn(GlobalHotKeyEvent)>);
         }
@@ -654,6 +700,13 @@ impl DesktopControls {
     pub fn set_capture_cancellable(&mut self, _: bool) {}
     pub fn configure_shortcuts(&mut self, _: &ShortcutSettings, _: bool) -> Result<(), String> {
         Err("Global shortcuts require macOS.".into())
+    }
+    pub fn configure_quick_capture(&mut self, shortcut: Option<&str>) -> Result<(), String> {
+        if shortcut.is_none() {
+            Ok(())
+        } else {
+            Err("Global shortcuts require macOS.".into())
+        }
     }
     pub fn clear_shortcuts(&mut self) {}
 }

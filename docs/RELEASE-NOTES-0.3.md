@@ -1,3 +1,19 @@
+# 0.3.0-beta.5: everyday capture and text correction (unreleased)
+
+- Text opens a focused draft after placement, with explicit Add/Apply/Cancel, double-click editing and atomic undo. Step controls are separate.
+- First-run Capture setup covers screen access, an independent global area shortcut, destination, naming, UTC date folders and optional automatic saving.
+- Automatic saves never overwrite earlier captures. A failed save keeps the captured image available for manual recovery. Imported and session images retain their existing behaviour.
+- Shared full-width tool buttons, consistent capture action sizing, additional labelled icons and cool neutral surfaces.
+- [Implementation contract](specs/everyday-capture.md), updated guide and test evidence. Persistent editable documents remain backlog [#33](https://github.com/jonathan-tipper/framecraft/issues/33).
+
+This candidate is not a published release. Native acceptance and distribution limits are recorded in TEST-NOTES; Developer ID signing/notarisation remain outstanding.
+
+# 0.3.0-beta.4: screen-access recovery (unreleased)
+
+Fixes the missing explicit screen-recording request flow. More Capture → Screen Access offers Request Access, Open System Settings and Check Again. One-off capture checks permission before hiding Framecraft; the shared capture adapter checks again before starting the native command, including session captures. Denied/unrequested access preserves the existing document and opens recovery. Command errors retain their diagnostic without asserting that every failure is a permission problem.
+
+No permission is approved automatically. The full first-grant/denial/restart cycle must be checked on the affected Mac. Ad-hoc signing and cross-build permission identity remain distribution limits. See [installation recovery](INSTALLATION.md#allow-capture) and [test evidence](TEST-NOTES.md).
+
 # 0.3.0-beta.3: editor experience (unreleased)
 
 Development implementation of [epic #22](https://github.com/jonathan-tipper/framecraft/issues/22), using the [reviewed design candidate](specs/editor-experience-prototype.md). No beta 3 release or notarised download is published by this change. Build the current branch using the README instructions.

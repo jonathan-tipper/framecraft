@@ -144,3 +144,29 @@ This matrix covers #23–#28 against [the native contract](specs/editor-native-e
 For pixelation, unit fixtures must vary only hidden redacted/cropped source samples and compare all visible output pixels. Include transparent pixels with differing hidden RGB, partially transparent averages, block origins, clipped edges, overlap ordering and aggregate work limits. Resource-bound rejection should produce an actionable error rather than silently lowering quality.
 
 For UI changes, source or headless checks support regression diagnosis but do not establish native pointer interaction, VoiceOver or rendering at Retina scale. Keep every unperformed item explicit in TEST-NOTES and the owning issue.
+
+## Screen access recovery, beta 4
+
+Use an installed copy and record macOS version, build and executable path. Use synthetic screen content. Do not reset other applications' permissions.
+
+1. With access unavailable, click Capture Area. Framecraft must stay visible, retain the current image/edits and show Screen Access without starting a selector.
+2. Choose Request Access. Confirm the macOS prompt names the intended installed copy. The tester chooses Allow or denial; Framecraft cannot approve it.
+3. Denial must preserve the document. Check Again reads status without capturing. Open System Settings must open the recording privacy pane or show a useful fallback error.
+4. If absent, add `/Applications/Framecraft.app` using the privacy list's + button. Approve access, quit/reopen when requested, Check Again and explicitly retry capture. Test both Area and Screen with synthetic content.
+5. Record whether an ad-hoc update or different launch path requires approval again. Test the actual installed build, not only cargo/Terminal attribution.
+6. A failed/empty rectangle with granted access must retain its command diagnostic and must not assert that permission was denied. Original images remain unchanged.
+
+Record first-grant, denied, revoked, restart-required and already-granted cases separately. Managed-device restrictions and native system prompts need an actual Mac test, not mocks.
+
+
+## Everyday capture and text correction (beta 5 candidate)
+
+Use a disposable destination and synthetic image. Record app path, signing identity, OS version and whether each check was automated or observed natively.
+
+1. First launch shows 4-step setup. Visit each step at 900 × 620, use Back, then Not now. Confirm capture/import remains available and no preferences were saved. Reopen Capture setup from header, app menu and Command-comma.
+2. Configure a spare shortcut and a disposable folder, prefix and UTC date grouping. Finish, quit and reopen; confirm values persist. Try conflicting session/OS keys and an unwritable folder. Failure must retain the draft and prior working key. Malformed quick-capture settings must be reported before any explicit replacement.
+3. From another app, press the global shortcut. With permission denied, Framecraft must come forward and explain access. With access granted, select an area. Escape cancels. Check active-session, dirty-image and open-dialog guards.
+4. Open-editor mode writes no automatic file. Automatic mode saves original pixels under the configured UTC name and opens them for optional edits. Repeat within the same second; earlier PNGs remain byte-identical. Delete/move the disposable folder and retry; capture must remain open and unsaved with manual Save PNG recovery. Cancel before atomic publication creates no PNG; a completed save is retained.
+5. Open the synthetic sample. Choose Text, click the image and type without another click. Add a multiline label, select Edit text, change it and Cancel/Escape. Reopen and verify original wording. Apply a real change, Undo/Redo and save a PNG. Inspect exported pixels. New text should be white against its dark backing by default; custom colours remain explicit.
+6. Repeat on an imported PNG and a session frame. A dirty session-frame header at minimum width must retain Copy, Save, Save Edited Copy and Close access. Existing mark types, crop and redaction output must remain intact. Exported/reopened PNGs do not restore editable text objects.
+7. Check keyboard traversal, named controls and VoiceOver; record assistance needed and any unclear icons. Native appearance at Retina/non-Retina and supported macOS versions still needs separate runs.

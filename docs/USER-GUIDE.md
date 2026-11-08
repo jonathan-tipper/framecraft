@@ -40,6 +40,7 @@ The capture-frame menu bar icon offers **Capture Area…**, **Capture Window…*
 | `Cmd+Option+P` | Pause/resume an active session |
 | `Cmd+Option+X` | Stop an active session |
 | `Cmd+Option+4`, `5`, `3` | One-off area, window, primary-screen capture while Framecraft is active |
+| `Cmd+,` | Open Capture setup |
 | `Cmd+O` | Open a PNG/JPEG in the Editor |
 | `Cmd+S` | Save edited session copy, or export a standalone PNG |
 | `Cmd+Shift+C` | Copy current composed image in the Editor |
@@ -47,7 +48,7 @@ The capture-frame menu bar icon offers **Capture Area…**, **Capture Window…*
 
 Capture commands are application-wide while Framecraft is active and no collection is running. Save/copy/undo apply to the visible Screenshot editor; they do not edit a hidden document in Sessions. Text-entry controls take priority over document editing shortcuts.
 
-Open **Keyboard Shortcuts…** from the window or menu bar. Command (⌘) and Option (⌥) are the Mac keys beside the space bar. The first section lists screenshot commands. The second has checkboxes for Command, Option, Control and Shift, plus a key menu for the three session actions. Choose at least one modifier. Letters, digits and F1–F24 are available. Duplicate or reserved bindings show an error; if another app occupies a combination, choose another. Existing saved shortcuts keep their meaning. **Restore Defaults** changes the form; **Save Shortcuts** keeps the changes. Session shortcuts become active only when a collection starts.
+Open **More Capture → Session & app shortcuts…** for the session bindings and application command reference. Command (⌘) and Option (⌥) are the Mac keys beside the space bar. The first section lists screenshot commands. The second has checkboxes for Command, Option, Control and Shift, plus a key menu for the three session actions. Choose at least one modifier. Letters, digits and F1–F24 are available. Duplicate or reserved bindings show an error; if another app occupies a combination, choose another. Existing saved shortcuts keep their meaning. **Restore Defaults** changes the form; **Save Shortcuts** keeps the changes. Session shortcuts become active only when a collection starts.
 
 In **Collection options**, **Save as defaults** retains the title, destination, display number, mode, timing/change controls, naming choice and stop limits. Defaults are also saved when starting or closing the app. **Restore defaults** restores the initial settings. A previous region is shown only as a hint: select and confirm the source again before capture. Restart never resumes a session automatically.
 
@@ -86,7 +87,7 @@ Choose **Edit image** on a frame, import a PNG/JPEG, or use **Capture Area…**.
 
 The left rail names each tool alongside its icon; the right inspector shows the relevant properties. Use arrows, rectangles, highlights, pixelation, freehand ink, redactions, text or numbered steps. **Select** chooses a mark for revision, movement or deletion. When objects overlap, selection follows their visual order: redactions take priority, ordinary annotations sit above pixelation, and later pixelation regions cover earlier ones. Use **Select mark** to choose an obscured mark. **Delete selected mark** removes it; the Left/Right/Up/Down controls nudge it by 1 source pixel. Moving keeps a shape together and within the source bounds; an oversized label must be reduced before it can move.
 
-Text labels support explicit newlines, up to 2,048 Unicode characters and 32 lines. The **Size** slider offers 8–128 pixels. They use an embedded Hack font. Unsupported glyphs appear as `?`; there is no automatic wrapping or complex-script shaping. Numbered steps support 1–9,999; **Size** changes the badge radius. Choose the tool and click the image to place a label or step, or use **Apply label / step properties** to revise the selected object. Preview and export share the pixel renderer. Undo/redo affects in-memory edits.
+Choose **Text**, click the image where the label should start, then type into the focused **Add text** dialog. Choose **Add text** to commit, or **Cancel** / Escape to discard the draft. Select an existing label and choose **Edit text…**, or double-click it, to change wording, size and colour together. **Apply changes** creates one undo step. Empty labels cannot be committed. Text supports explicit newlines, up to 2,048 Unicode characters and 32 lines, at 8–128 source pixels. The embedded Hack font displays unsupported glyphs as `?`; there is no automatic wrapping or complex-script shaping. Numbered steps have separate controls, values 1–9,999 and a badge-size setting. Preview and export share the pixel renderer. Undo/redo affects in-memory edits.
 
 Opaque redactions render after other marks and destroy the covered pixels in the flattened export. The source image and undo history remain in memory, and the original file remains on disk. **Save edited copy** writes another PNG beside the original; a normal PNG export is also available.
 
@@ -144,3 +145,19 @@ If a PNG was saved but metadata failed, keep the session folder and reopen it fo
 | Clipboard | Last deliberately copied image/text; retention depends on macOS and other apps |
 
 Framecraft does not automatically delete originals or clean up session folders. Cloud-synchronised destination folders can upload your files through another application. The current renderer uses RGBA8 and does not provide colour-managed HDR/wide-gamut output.
+
+
+## Set up everyday capture
+
+In the development beta 5, first launch opens **Make capture yours**. **Capture setup** in the header or the app's Settings menu reopens it. **More Capture → Session & app shortcuts…** remains separate.
+
+1. **Access:** check screen permission. Request it only when ready, approve in macOS and restart if macOS asks. Setup itself can continue without access.
+2. **Shortcut:** enable an everyday area shortcut, initially **Command + Shift + 2**, or switch it off. It works from another app while Framecraft is running. The three session shortcuts remain independent. Conflicts need a different combination.
+3. **Files:** choose a folder, a prefix such as `Project review`, and optional date folders. A preview shows the structure. Timestamps and date folders use UTC; collisions add a suffix instead of replacing files.
+4. **Finish:** choose **Open the editor** (default) or **Save automatically, then open for optional editing**. Finish validates and saves. Back retains the draft. Not now/Cancel discards changes.
+
+Automatic saving writes original captured pixels only, for one-off area/window/screen captures. The image then opens for editing. Edited exports use Save PNG and a separate suggested filename; the captured original stays intact unless you explicitly choose to overwrite it in the save dialog. Cancellation before file publication writes nothing; once publication completes, the saved image is retained. Imports and session images do not trigger automatic saving. If the destination is unavailable or full, the image stays open as unsaved and the status tells you to use Save PNG. Reopen Capture setup to repair the folder.
+
+Preferences live at `~/Library/Application Support/Framecraft/quick-capture.json`, separately from session shortcuts. Corrupt settings produce a visible setup error. Only an explicit Finish replaces them. Setup doesn't add Framecraft to login items or grant permissions automatically.
+
+For later editing, use Open Image or drop a PNG/JPEG into the app. Previous exported annotations are flattened pixels; an editable document format is planned under [#33](https://github.com/jonathan-tipper/framecraft/issues/33).
