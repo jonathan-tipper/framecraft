@@ -12,7 +12,8 @@ Framecraft is a Rust desktop application with an egui/eframe GPU-rendered interf
 | `session.rs` | Atomic PNG storage, safe filenames, per-capture synchronisation and change detection |
 | `library.rs` | Versioned manifests, stable capture IDs, file inspection, confirmation/recovery, folder locking and recents |
 | `capture.rs` | Bounded system screenshot process, display geometry checks, cropping and capture-control visibility |
-| `desktop.rs`, `settings.rs` | Main-thread menu bar/global shortcuts and local preferences |
+| `desktop.rs`, `settings.rs` | Main-thread menu bar/global shortcuts and session shortcut preferences |
+| `quick_capture.rs`, `setup_ui.rs` | Independent one-off capture settings, UTC names, cancellable no-clobber PNG publication and native setup draft |
 | `naming.rs` | Apple Vision observations, separate heading ranking and full-text reading order |
 | `editor.rs` | Source-coordinate annotations, glyph rasterisation, validation, crop/style composition and flattened pixels |
 | `output.rs` | Resolved pixel snapshots, neutral drag PNGs and staged offline packs |
@@ -73,3 +74,12 @@ The target is a local, ad-hoc signed macOS test bundle. Platform deployment flag
 The first window is single capture, with Sessions as a secondary view. Native application/menu bar actions route through the same guarded capture entry point. Capture Area uses the existing OS interactive selector; no new capture backend is introduced. App-visible capture shortcuts use the native menu accelerator on macOS. The three session bindings remain global only while a collection is active. Human-readable shortcut parts round-trip to the existing native key representation; saved legacy settings retain their meaning.
 
 The icon and DMG/install scripts are distribution assets, independent of image storage. The installed bundle has the same `dev.framecraft.app` identifier and macOS 13 baseline. Ad-hoc signing is not notarisation.
+
+
+## Everyday capture (beta 5 candidate)
+
+`setup_ui.rs` renders a draft; `app.rs` validates, probes the destination when direct saving is selected, registers the independent area shortcut and atomically persists `quick-capture.json`. A failed persistence attempt restores the previous key or reports recovery failure. Session keys use their existing file and remain independent; conflicts are validated at both the preference and native boundaries.
+
+The capture worker retains pixel ownership through optional automatic saving. `quick_capture.rs` writes a private temporary PNG, checks cancellation and atomically publishes without replacement. Cancellation before publication returns no image/file; publication is the commit boundary. Save failure returns the captured pixels to the editor as unsaved. Successful automatic saving marks only the just-loaded source revision saved; later annotation edits remain unsaved. The shared renderer continues to govern edited exports.
+
+Text editing uses a draft transaction isolated from underlying commands. Add/Apply creates one history entry; Cancel never adds an empty annotation. The current PNG format remains flattened. See the [everyday capture contract](specs/everyday-capture.md).

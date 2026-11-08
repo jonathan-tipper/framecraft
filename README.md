@@ -1,8 +1,8 @@
-# Framecraft 0.3.0-beta.4 (development)
+# Framecraft 0.3.0-beta.5 (development)
 
 Capture an area of your Mac’s screen, annotate it, then copy or save the image. For meetings and presentations, collect a sequence of frames and return to it later. Images and OCR stay on your Mac.
 
-This branch contains the next editor iteration. Beta 4 is not published yet; the downloadable beta 2 does not include these changes. Use the source build below to test this branch.
+This branch contains the next editor iteration. Beta 5 is not published yet; the downloadable beta 2 does not include these changes. Use the source build below to test this branch.
 
 ## Install on your Mac
 
@@ -12,17 +12,22 @@ This beta is ad-hoc signed, not Developer ID signed or notarised. macOS may bloc
 
 ## Take your first screenshot
 
-1. Click **Capture Area…** in the window or from the Framecraft menu bar icon.
-2. Drag a rectangle around the content on screen. Press Escape to cancel.
-3. Review the result. Use **Copy Image**, **Save PNG…**, or an annotation tool. **Background & framing** adds optional presentation styling; new captures start with unchanged dimensions.
+1. On first launch, use **Capture setup** to choose a global shortcut, save folder, filename prefix, optional UTC date folders and whether to edit or save automatically. **Not now** skips setup. You can reopen it at any time.
+2. Click **Capture Area…** in the window or from the Framecraft menu bar icon.
+3. Drag a rectangle around the content on screen. Press Escape to cancel.
+4. Review the result. Use **Copy Image**, **Save PNG…**, or an annotation tool. **Background & framing** adds optional presentation styling; new captures start with unchanged dimensions.
 
 **Capture Window…** selects a window. **Capture Screen** takes the primary display. **Open Image…** imports a PNG or JPEG. The same capture commands are in the Mac’s **Capture** application menu. The app requests the screen access macOS requires; it never grants itself permission.
 
-Shortcuts are optional. **Command (⌘)** and **Option (⌥)** are Mac modifier keys. While Framecraft is active, **Command + Option + 4** captures an area, **5** a window and **3** the primary display. Open **Keyboard Shortcuts…** for the full list and selectable session bindings. You do not need to type key syntax.
+Shortcuts are optional. **Command (⌘)** and **Option (⌥)** are Mac modifier keys. While Framecraft is active, **Command + Option + 4** captures an area, **5** a window and **3** the primary display. Use **Capture setup** for an everyday shortcut that works from other apps while Framecraft is running. **More Capture → Session & app shortcuts…** contains the existing app commands and session bindings. You do not need to type key syntax.
 
 ## Edit and leave a screenshot
 
 The development editor uses a labelled tool rail and a contextual inspector. Choose **Highlight** for named colour presets and custom RGB, or **Pixelate** to draw an area and adjust **Block size**. The inspector distinguishes settings for the next mark from properties of a selected mark. Use **Redact** for an opaque cover; pixelation is not guaranteed concealment.
+
+**Text** now works in placement order: choose Text, click the image, type, then **Add text**. Select a label and choose **Edit text…**, or double-click it, to revise it. **Apply changes** commits one undo step; Cancel/Escape preserves the original.
+
+Automatic saving is optional. It saves the captured pixels, then opens them for editing; subsequent edits are saved separately. If automatic saving fails, the capture stays open for manual saving. Reopened PNGs can receive new marks, but their previous text is flattened. Persistent editable documents are tracked in [#33](https://github.com/jonathan-tipper/framecraft/issues/33).
 
 **Cancel tool** returns to Select and preserves completed marks. Use Undo after committing a mark. **Close screenshot** leaves Framecraft running; a fresh capture or unsaved edit offers Save, Discard changes and Cancel. Copying to the clipboard does not count as saving a file. Native checks and outstanding limits are recorded in [TEST-NOTES](docs/TEST-NOTES.md).
 

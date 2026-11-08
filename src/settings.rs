@@ -163,7 +163,7 @@ pub fn display_shortcut(value: &str) -> Result<String, String> {
     Ok(ShortcutParts::parse(value)?.display())
 }
 
-fn canonical_key(value: &str) -> Result<String, String> {
+pub(crate) fn canonical_key(value: &str) -> Result<String, String> {
     let mut modifiers = [false; 4];
     let tokens: Vec<_> = value.split('+').map(str::trim).collect();
     if tokens.len() < 2 {

@@ -1146,7 +1146,7 @@ dependencies = [
 
 [[package]]
 name = "framecraft"
-version = "0.3.0-beta.4"
+version = "0.3.0-beta.5"
 dependencies = [
  "ab_glyph",
  "arboard",
