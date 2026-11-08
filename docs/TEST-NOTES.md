@@ -1,3 +1,38 @@
+# Everyday capture candidate: 0.3.0-beta.5
+
+8 November 2026. Implements the text correction in #14, setup in #32 and visual consistency follow-ups in #27/#28. This is a local test candidate, not a published or accepted release.
+
+## Automated checks
+
+- `cargo test --workspace --all-targets --locked`: **187 passed**, 4 explicitly ignored (127 library, 49 application, 11 pixelation tests).
+- `cargo test --workspace --no-default-features --locked`: **134 passed**, 4 ignored.
+- Strict Clippy passed for all targets with default and no-default features. Formatting and diff checks passed.
+- Text regressions exercise focused typing/Escape, add/edit/cancel, blank/oversized validation, atomic undo/redo, unchanged Apply, modal command guards and shared composed output.
+- Capture preference/storage tests cover round-trip, invalid/corrupt settings, key conflicts, unsafe prefixes/paths, exact original pixels, concurrent filename collisions, cancelled staging and publication boundaries. App tests retain a failed-save image as unsaved, mark a successful auto-save clean, and protect subsequent edits.
+- Setup renders all 4 steps headlessly at 900 × 620. A separate accessibility-bounds test checks Open/Close/Copy/Save/Save Edited Copy/More Actions in a dirty session-frame header at that width. Rendering without a panic is not treated as visibility proof.
+- Review found and corrected cancellation during PNG staging, an unused default key reserved by skipped setup, hidden permission feedback from a background trigger, and conflicts with OCR/prepared-drag dialogs. Strict Clippy caught an unbound accessibility label; it was connected and the check rerun successfully.
+
+## Native observations
+
+A separately identified, ad-hoc-signed `Framecraft Preview.app` was launched with synthetic sample content. The installed `/Applications/Framecraft.app` was not replaced and no Screen Recording permission was changed.
+
+- Walked through Access → Shortcut → Files → Finish; the naming preview and edit/save choices appeared. Not now returned to capture-ready, and the next launch offered setup again. Finish was not used to change the user's preferences.
+- Selected Text, clicked the sample image and typed immediately into the focused field. Add text created a visible label. Edit text prefilled the original, Escape discarded new wording, reopening confirmed the original, and Apply changed the rendered label.
+- Saved an edited sample through the native PNG picker; inspected the resulting 1120 × 700 PNG and observed the revised text. The disposable path was `/private/tmp/Screenshot-editedframecraft-beta5-text-native.png.png`; the picker automation appended rather than replaced its name, and the app preserved the picker-approved path.
+- Visual inspection exposed low contrast in the inherited blue-on-dark default. New labels now default to white on the dark backing; a final rebuilt preview confirmed this visibly.
+- Resized the final native preview to 900-point width and its minimum content height. Tool buttons share one width, the tool rail scrolls, capture/edit actions remain visible, text entry fits, and the nudge controls use a regular 2-column grid. The dirty session-specific header is covered by the bounds test; its native session walkthrough remains open.
+- Command-Q after editing showed Save/Discard/Cancel. Discard closed the disposable sample; process inspection confirmed the preview exited.
+
+Evidence: [setup](evidence/beta5-native/setup.jpg), [text entry at minimum size](evidence/beta5-native/text-edit.jpg), [final compact editor](evidence/beta5-native/editor.jpg). Setup/text images show actual native UI, not a browser mock-up. They do not establish VoiceOver usability or user preference.
+
+## Build and remaining acceptance
+
+Release build, strict ad-hoc signature and plist checks passed. DMG creation required the host disk-image service outside the restricted shell; the host packaging run and checksum verification passed. Local artefact: `dist/Framecraft-0.3.0-beta.5-macos-arm64.dmg`, SHA-256 `c4fb93a8c396f9a75c70ccb0834857659ff37ea2546b4b30423bf98535e55e63`.
+
+Still required: Finish/relaunch preference verification through the native app, real background shortcut registration/conflict and permission recovery, selector completion/Escape through automatic saving, VoiceOver and keyboard-only setup, non-Retina/multiple displays, supported macOS versions/Intel and a user comparison of the design. The existing app permission recovery evidence below remains historical; a new ad-hoc binary may need renewed consent. Developer ID signing/notarisation remain outstanding. #32 and the related stories stay open for these acceptance gaps. Persistent editable documents are backlog #33.
+
+---
+
 # Screen access recovery verification: 0.3.0-beta.4
 
 1 November 2026. Fix for the reported `could not create image from rect` failure and inability to enable Framecraft. Source inspection found the preflight helper unused, no direct screen-capture permission request, and generic permission advice appended to every command failure. This establishes a missing recovery flow, not the cause of every rectangle failure or the affected Mac's TCC state.

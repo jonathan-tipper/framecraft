@@ -5,6 +5,7 @@ pub mod editor;
 pub mod library;
 pub mod naming;
 pub mod output;
+pub mod quick_capture;
 pub mod session;
 pub mod session_runner;
 pub mod settings;
