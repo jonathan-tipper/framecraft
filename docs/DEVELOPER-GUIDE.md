@@ -99,6 +99,8 @@ The source build is ad-hoc signed. Rebuilding can change its macOS permission id
 
 ## Package a Developer ID beta
 
+The GitHub verification job runs on `macos-15` with a macOS 13 deployment target. GitHub retired the macOS 14 runner on 2 November 2026. [GitHub runner announcement](https://github.blog/changelog/2026-10-01-github-actions-macos-14-runner-image-retirement/)
+
 Use a clean checkout of the reviewed candidate and a Mac with the project's **Developer ID Application** identity and private key in Keychain. The notarytool profile belongs in Keychain too. The two environment values below are a certificate name or fingerprint and a profile name. Keep passwords and private keys out of the shell command, repository and GitHub issue.
 
 ```sh
