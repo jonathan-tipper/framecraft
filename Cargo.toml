@@ -1,6 +1,6 @@
 [package]
 name = "framecraft"
-version = "0.3.0-beta.5"
+version = "0.3.0-beta.6"
 edition = "2021"
 description = "A local-first, all-Rust screenshot workbench for macOS"
 license = "MIT"
@@ -25,10 +25,14 @@ raw-window-handle = { version = "0.6", optional = true }
 [target.'cfg(target_os = "macos")'.dependencies]
 global-hotkey = { version = "0.8", optional = true }
 tray-icon = { version = "0.25", optional = true, default-features = false }
-objc2-app-kit = { version = "0.3.2", optional = true, default-features = false, features = ["std", "NSApplication", "NSResponder", "NSView", "NSWindow", "NSEvent", "NSDragging", "NSDraggingSession", "NSDraggingItem", "NSPasteboard", "NSImage", "NSAccessibilityProtocols"] }
+objc2-app-kit = { version = "0.3.2", optional = true, default-features = false, features = ["std", "NSApplication", "NSResponder", "NSView", "NSWindow", "NSEvent", "NSDragging", "NSDraggingSession", "NSDraggingItem", "NSPasteboard", "NSPasteboardItem", "NSImage", "NSAccessibilityProtocols", "NSPanel", "NSScreen", "NSGraphics", "NSImageView", "NSControl", "NSCell", "NSButton", "NSTextField", "objc2-core-foundation"] }
 objc2 = "0.6"
 objc2-foundation = { version = "0.3.2", default-features = false, features = ["std", "NSArray", "NSData", "NSDictionary", "NSError", "NSObject", "NSString", "NSURL", "NSGeometry"] }
 objc2-vision = { version = "0.3.2", default-features = false, features = ["std", "VNRequest", "VNRequestHandler", "VNRecognizeTextRequest", "VNObservation", "VNTypes", "objc2-core-foundation"] }
+
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["NSWorkspace", "NSRunningApplication", "NSText", "NSTextView", "NSBitmapImageRep", "NSImageRep", "libc"] }
+objc2-foundation = { version = "0.3.2", default-features = false, features = ["NSRunLoop", "NSDate"] }
 
 [profile.release]
 lto = "thin"

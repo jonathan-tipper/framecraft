@@ -7,6 +7,7 @@ use eframe::egui::{self, RichText};
 use framecraft::{
     capture,
     quick_capture::{AfterCapture, QuickCaptureSettings},
+    settings::{ShortcutParts, ShortcutSettings},
 };
 
 pub struct SetupDraft {
@@ -14,6 +15,8 @@ pub struct SetupDraft {
     pub error: Option<String>,
     step: usize,
     access: capture::PermissionStatus,
+    recording: bool,
+    registered_stroke: Option<RecordedShortcut>,
 }
 
 pub enum SetupAction {
@@ -29,10 +32,113 @@ impl SetupDraft {
             error: None,
             step: 0,
             access: capture::permission_status(),
+            recording: false,
+            registered_stroke: None,
         }
     }
 
-    pub fn show(&mut self, ctx: &egui::Context) -> SetupAction {
+    pub fn review_shortcut(settings: QuickCaptureSettings, warning: String) -> Self {
+        let mut draft = Self::new(settings);
+        draft.step = 1;
+        draft.error = Some(warning);
+        draft
+    }
+
+    pub fn offer_registered_stroke(&mut self, active: &QuickCaptureSettings) {
+        if self.recording {
+            self.registered_stroke = Some(RecordedShortcut {
+                binding: active.shortcut.clone(),
+                layout_key: active.recorded_key_label.clone(),
+            });
+        }
+    }
+
+    fn shortcut_step(&mut self, ui: &mut egui::Ui, session: &ShortcutSettings) {
+        let registered_stroke = self.registered_stroke.take();
+        ui.heading("Capture from any app");
+        ui.label(
+            "Framecraft must be running. The shortcut starts an area selection. Escape cancels it.",
+        );
+        ui.radio_value(
+            &mut self.settings.shortcut_enabled,
+            true,
+            "Use a global shortcut",
+        );
+        ui.radio_value(
+            &mut self.settings.shortcut_enabled,
+            false,
+            "Use menu bar only",
+        );
+        if !self.settings.shortcut_enabled {
+            self.recording = false;
+            return;
+        }
+        ui.label(self.settings.shortcut_label());
+        let response = ui.button(if self.recording {
+            "Press your shortcut…"
+        } else {
+            "Record shortcut"
+        });
+        if self.recording
+            && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
+        {
+            self.recording = false;
+            self.error = None;
+        } else if response.clicked() && !self.recording {
+            response.request_focus();
+            self.recording = true;
+            self.error = None;
+        } else if self.recording {
+            if response.has_focus() && ui.input(|i| i.focused) {
+                let event = ui.input_mut(|i| {
+                    let (index, key) =
+                        i.events.iter().enumerate().find_map(|(index, event)| {
+                            recorded_key(event).map(|key| (index, key))
+                        })?;
+                    i.events.remove(index);
+                    Some(key)
+                });
+                if let Some(key) = event.or_else(|| registered_stroke.map(Ok)) {
+                    let result = key.and_then(|stroke| {
+                        let mut candidate = self.settings.clone();
+                        candidate.shortcut = stroke.binding;
+                        candidate.recorded_key_label = stroke.layout_key;
+                        candidate.validate_shortcut(session)?;
+                        self.settings = candidate;
+                        Ok(())
+                    });
+                    self.recording = result.is_err();
+                    self.error = result.err();
+                }
+            } else {
+                self.recording = false;
+            }
+        }
+        if self.recording {
+            ui.label("Press the keys together. Escape keeps the previous choice.");
+            ui.memory_mut(|m| {
+                m.set_focus_lock_filter(
+                    response.id,
+                    egui::EventFilter {
+                        escape: true,
+                        ..Default::default()
+                    },
+                )
+            });
+        }
+        ui.collapsing("Choose keys individually", |ui| {
+            let before = self.settings.shortcut.clone();
+            shortcut_editor(ui, "Capture Area", &mut self.settings.shortcut, 20);
+            if self.settings.shortcut != before {
+                self.settings.recorded_key_label = None;
+                self.recording = false;
+                self.error = None;
+            }
+        });
+        ui.label("Finish setup checks availability. Some Mac apps share shortcuts without reporting a conflict. Try the keys in the apps you use, or choose a different combination.");
+    }
+
+    pub fn show(&mut self, ctx: &egui::Context, session: &ShortcutSettings) -> SetupAction {
         let mut action = SetupAction::None;
         egui::Window::new("Make capture yours")
             .id(egui::Id::new("capture-setup"))
@@ -66,16 +172,7 @@ impl SetupDraft {
                             });
                             ui.label("You can continue setup without granting access. Capture will ask when needed. If macOS requests a restart, quit and reopen this copy.");
                         }
-                        1 => {
-                            ui.heading("Capture from any app");
-                            ui.label("Framecraft must be running. The shortcut starts an area selection; Escape cancels it.");
-                            ui.add_space(12.0);
-                            ui.checkbox(&mut self.settings.shortcut_enabled, "Enable everyday capture shortcut");
-                            ui.add_enabled_ui(self.settings.shortcut_enabled, |ui| {
-                                shortcut_editor(ui, "Capture an area", &mut self.settings.shortcut);
-                            });
-                            ui.label("Command is the ⌘ key; Option is ⌥. Session shortcuts remain separate. Conflicts are checked when you finish.");
-                        }
+                        1 => self.shortcut_step(ui, session),
                         2 => {
                             ui.heading("Give screenshots a home");
                             ui.label("Save location");
@@ -101,11 +198,30 @@ impl SetupDraft {
                             ui.label("Review, annotate, then choose Save PNG or Copy image. Nothing is saved automatically.");
                             ui.add_space(8.0);
                             ui.radio_value(&mut self.settings.after_capture, AfterCapture::Save, "Save automatically, then open for optional editing");
-                            ui.label("Saves the captured pixels immediately. Annotations are saved separately, so the original capture stays intact.");
+                            ui.radio_value(&mut self.settings.after_capture, AfterCapture::CopyAndReturn, "Copy and return");
+                            if self.settings.after_capture == AfterCapture::CopyAndReturn {
+                                ui.label("Paste straight into the app you were using. This capture uses the clipboard on this Mac only.");
+                            }
+                            ui.radio_value(&mut self.settings.after_capture, AfterCapture::SaveAndReturn, "Save and return");
+                            if self.settings.after_capture == AfterCapture::SaveAndReturn {
+                                ui.label(format!("Stay in your app. PNGs go to {}.", self.settings.destination.display()));
+                            }
+                            if self.settings.after_capture.stays_in_source() {
+                                ui.checkbox(&mut self.settings.show_thumbnail, "Show a thumbnail after capture");
+                                ui.label("Edit Last Capture is also available from the Framecraft menu bar icon.");
+                            }
                             ui.add_space(14.0);
                             ui.separator();
                             ui.strong("Your setup");
-                            ui.label(if self.settings.shortcut_enabled { format!("Area shortcut: {}", self.settings.shortcut) } else { "Everyday shortcut is off. Capture buttons still work.".into() });
+                            if self.settings.shortcut_enabled {
+                                ui.label(format!("Area shortcut: {}", self.settings.shortcut_label()));
+                                if ui.button("Use menu bar only").clicked() {
+                                    self.settings.shortcut_enabled = false;
+                                    self.error = None;
+                                }
+                            } else {
+                                ui.label("Everyday shortcut is off. Use Capture Area in the menu bar.");
+                            }
                             ui.label(format!("Folder: {}", self.settings.destination.display()));
                             ui.label(format!("Names start with: {}", self.settings.filename_prefix));
                             ui.label("Finish checks your choices and saves them on this Mac.");
@@ -123,8 +239,13 @@ impl SetupDraft {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if self.step == 3 {
                             if ui_icons::button(ui, "Finish setup", Icon::Save, false).clicked() { action = SetupAction::Finish; }
-                        } else if ui.button("Continue").clicked() { self.step += 1; self.error = None; }
-                        if self.step > 0 && ui.button("Back").clicked() { self.step -= 1; self.error = None; }
+                        } else if ui.add_enabled(!self.recording, egui::Button::new("Continue")).clicked() {
+                            self.error = if self.step == 1 && self.settings.shortcut_enabled {
+                                self.settings.validate_shortcut(session).err()
+                            } else { None };
+                            if self.error.is_none() { self.step += 1; }
+                        }
+                        if self.step > 0 && ui.button("Back").clicked() { self.step -= 1; self.recording = false; self.error = None; }
                     });
                 });
             });
@@ -135,9 +256,192 @@ impl SetupDraft {
     }
 }
 
+struct RecordedShortcut {
+    binding: String,
+    layout_key: Option<String>,
+}
+
+fn recorded_key(event: &egui::Event) -> Option<Result<RecordedShortcut, String>> {
+    match event {
+        egui::Event::Copy | egui::Event::Cut | egui::Event::Paste(_) => Some(Err(
+            "That shortcut belongs to the clipboard. Choose another combination.".into(),
+        )),
+        egui::Event::Key {
+            key,
+            physical_key,
+            pressed: true,
+            repeat: false,
+            modifiers,
+            ..
+        } if !matches!(key, egui::Key::Tab | egui::Key::Escape) => {
+            let position = physical_key.unwrap_or(*key);
+            let parts = ShortcutParts {
+                command: modifiers.mac_cmd || (modifiers.command && !modifiers.ctrl),
+                option: modifiers.alt,
+                control: modifiers.ctrl,
+                shift: modifiers.shift,
+                key: position.name().into(),
+            };
+            // GlobalHotKey uses hardware positions. Keep the actual key legend
+            // as well on layouts such as AZERTY. Shifted punctuation stays on
+            // its number key, e.g. Shift+2 still displays as Shift+2.
+            let legend = key.name();
+            let label = (*key != position
+                && legend.len() == 1
+                && legend.as_bytes()[0].is_ascii_alphanumeric())
+            .then(|| legend.to_owned());
+            Some(Ok(RecordedShortcut {
+                binding: parts.display(),
+                layout_key: label,
+            }))
+        }
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    fn render_shortcut_step(
+        draft: &mut SetupDraft,
+        ctx: &egui::Context,
+        events: Vec<egui::Event>,
+        focused: bool,
+    ) -> egui::FullOutput {
+        let mut strokes = Vec::new();
+        for event in events {
+            let release = match &event {
+                egui::Event::Key {
+                    key,
+                    physical_key,
+                    modifiers,
+                    pressed: true,
+                    ..
+                } => Some(egui::Event::Key {
+                    key: *key,
+                    physical_key: *physical_key,
+                    pressed: false,
+                    repeat: false,
+                    modifiers: *modifiers,
+                }),
+                _ => None,
+            };
+            strokes.push(event);
+            strokes.extend(release);
+        }
+        ctx.run(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    egui::Pos2::ZERO,
+                    egui::vec2(900., 620.),
+                )),
+                events: strokes,
+                focused,
+                ..Default::default()
+            },
+            |ctx| {
+                assert!(matches!(
+                    draft.show(ctx, &ShortcutSettings::default()),
+                    SetupAction::None
+                ));
+            },
+        )
+    }
+    fn arm_recorder(draft: &mut SetupDraft, ctx: &egui::Context) {
+        let tree = render_shortcut_step(draft, ctx, vec![], true)
+            .platform_output
+            .accesskit_update
+            .unwrap();
+        let target = tree
+            .nodes
+            .iter()
+            .find(|(_, node)| node.label() == Some("Record shortcut"))
+            .unwrap()
+            .0;
+        let activate = egui::Event::AccessKitActionRequest(egui::accesskit::ActionRequest {
+            action: egui::accesskit::Action::Click,
+            target,
+            data: None,
+        });
+        render_shortcut_step(draft, ctx, vec![activate], true);
+        assert!(draft.recording);
+    }
+    fn chord(
+        key: egui::Key,
+        position: egui::Key,
+        modifiers: egui::Modifiers,
+        repeat: bool,
+    ) -> egui::Event {
+        egui::Event::Key {
+            key,
+            physical_key: Some(position),
+            modifiers,
+            repeat,
+            pressed: true,
+        }
+    }
+    #[test]
+    fn recorder_is_focused_scoped_and_keeps_escape_inside_the_shortcut_step() {
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        let mut draft = SetupDraft::new(QuickCaptureSettings::default());
+        draft.step = 1;
+        let original = draft.settings.clone();
+        let mods = egui::Modifiers::CTRL | egui::Modifiers::SHIFT;
+        let change = chord(egui::Key::A, egui::Key::Q, mods, false);
+        render_shortcut_step(&mut draft, &ctx, vec![change.clone()], true);
+        assert_eq!(draft.settings, original);
+        arm_recorder(&mut draft, &ctx);
+        render_shortcut_step(&mut draft, &ctx, vec![egui::Event::Copy], true);
+        assert!(draft.error.as_ref().unwrap().contains("clipboard"));
+        assert_eq!(draft.settings, original);
+        render_shortcut_step(
+            &mut draft,
+            &ctx,
+            vec![chord(
+                egui::Key::Escape,
+                egui::Key::Escape,
+                egui::Modifiers::NONE,
+                false,
+            )],
+            true,
+        );
+        assert!(!draft.recording);
+        assert_eq!(draft.settings, original);
+        arm_recorder(&mut draft, &ctx);
+        render_shortcut_step(&mut draft, &ctx, vec![], false);
+        assert!(!draft.recording);
+        render_shortcut_step(&mut draft, &ctx, vec![change.clone()], true);
+        assert_eq!(draft.settings, original);
+        arm_recorder(&mut draft, &ctx);
+        render_shortcut_step(&mut draft, &ctx, vec![change], true);
+        assert!(!draft.recording);
+        assert_eq!(draft.settings.shortcut, "Control + Shift + Q");
+        assert_eq!(draft.settings.recorded_key_label.as_deref(), Some("A"));
+        assert!(!draft.settings.setup_complete);
+        arm_recorder(&mut draft, &ctx);
+        draft.offer_registered_stroke(&original);
+        render_shortcut_step(&mut draft, &ctx, vec![], false);
+        assert_eq!(draft.settings.recorded_key_label.as_deref(), Some("A"));
+        arm_recorder(&mut draft, &ctx);
+        draft.offer_registered_stroke(&original);
+        render_shortcut_step(&mut draft, &ctx, vec![], true);
+        assert_eq!(draft.settings, original);
+    }
+    #[test]
+    fn recorder_ignores_key_repeats_releases_and_navigation() {
+        let mods = egui::Modifiers::CTRL;
+        assert!(recorded_key(&chord(egui::Key::A, egui::Key::A, mods, true)).is_none());
+        assert!(recorded_key(&chord(egui::Key::Tab, egui::Key::Tab, mods, false)).is_none());
+        let release = egui::Event::Key {
+            key: egui::Key::A,
+            physical_key: None,
+            pressed: false,
+            repeat: false,
+            modifiers: mods,
+        };
+        assert!(recorded_key(&release).is_none());
+    }
     #[test]
     fn all_setup_steps_render_at_minimum_window_and_escape_keeps_preferences_uncommitted() {
         let ctx = egui::Context::default();
@@ -153,7 +457,10 @@ mod tests {
                 ..Default::default()
             };
             let _ = ctx.run(input, |ctx| {
-                assert!(matches!(draft.show(ctx), SetupAction::None));
+                assert!(matches!(
+                    draft.show(ctx, &ShortcutSettings::default()),
+                    SetupAction::None
+                ));
             });
         }
         assert_eq!(draft.settings, settings);
@@ -168,7 +475,10 @@ mod tests {
             ..Default::default()
         };
         let _ = ctx.run(input, |ctx| {
-            assert!(matches!(draft.show(ctx), SetupAction::Cancel));
+            assert!(matches!(
+                draft.show(ctx, &ShortcutSettings::default()),
+                SetupAction::Cancel
+            ));
         });
         assert!(!draft.settings.setup_complete);
     }

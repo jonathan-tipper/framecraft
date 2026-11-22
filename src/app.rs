@@ -1,8 +1,13 @@
+mod handoff;
+
 use crate::session_ui::{Action as SessionAction, ReviewFrame, SessionView};
 use crate::setup_ui::{SetupAction, SetupDraft};
 use crate::ui_icons::{self, Icon};
 use eframe::egui::{self, Color32, Pos2, RichText, Sense, Stroke, Vec2};
-use framecraft::desktop::{DesktopAction, DesktopControls};
+use framecraft::desktop::{DesktopAction, DesktopControls, QuickShortcutState};
+use framecraft::native_handoff::{
+    CaptureThumbnail, CaptureWindowGuard, EditorWindow, ThumbnailAction, ThumbnailPlacement,
+};
 use framecraft::quick_capture::{self, AfterCapture, QuickCaptureSettings};
 use framecraft::{
     capture::{self, CaptureMode},
@@ -72,6 +77,7 @@ enum Outcome {
     Loaded(image::RgbaImage, String),
     Captured(Option<image::RgbaImage>),
     AutoSaved(image::RgbaImage, Result<PathBuf, String>),
+    Direct(handoff::LastCapture),
     Exported(PathBuf, u64),
     DragReady(output::DragFile, Option<u64>, image::RgbaImage, String),
     Revealed,
@@ -95,6 +101,7 @@ enum Pending {
     Session(CaptureHandle, CaptureVariant),
     Quit,
     CloseScreenshot,
+    EditLastCapture,
 }
 struct OcrJob {
     revision: u64,
@@ -164,6 +171,10 @@ pub struct Framecraft {
     gesture_before: Option<Edits>,
     gesture_was_saved: bool,
     capture_cancel: Option<Arc<AtomicBool>>,
+    editor_window: Option<EditorWindow>,
+    capture_window_guard: Option<CaptureWindowGuard>,
+    last_capture: Option<handoff::LastCapture>,
+    thumbnail: CaptureThumbnail,
     screen_access_open: bool,
     screen_access_status: capture::PermissionStatus,
     saved_revision: u64,
@@ -186,6 +197,8 @@ pub struct Framecraft {
     desktop_attempted: bool,
     shortcuts_settings: ShortcutSettings,
     quick_settings: QuickCaptureSettings,
+    quick_shortcut_state: QuickShortcutState,
+    offer_shortcut_try: bool,
     setup: Option<SetupDraft>,
     settings_open: bool,
     settings_error: Option<String>,
@@ -215,8 +228,21 @@ pub struct Framecraft {
 impl Framecraft {
     pub fn new(cc: &eframe::CreationContext<'_>, demo: bool) -> Self {
         let mut app = Self::with_context(&cc.egui_ctx, demo);
-        match QuickCaptureSettings::load(&app.shortcuts_settings) {
-            Ok(settings) => app.quick_settings = settings,
+        if cfg!(target_os = "macos") {
+            match EditorWindow::from_handle(cc) {
+                Ok(window) => app.editor_window = Some(window),
+                Err(error) => app.notify(error, true),
+            }
+        }
+        match QuickCaptureSettings::path()
+            .and_then(|path| QuickCaptureSettings::load_with_review(&path, &app.shortcuts_settings))
+        {
+            Ok((settings, warning)) => {
+                if let Some(warning) = warning {
+                    app.setup = Some(SetupDraft::review_shortcut(settings.clone(), warning));
+                }
+                app.quick_settings = settings;
+            }
             Err(error) => {
                 app.notify(&error, true);
                 app.setup = Some(SetupDraft::new(app.quick_settings.clone()));
@@ -291,6 +317,10 @@ impl Framecraft {
             gesture_before: None,
             gesture_was_saved: false,
             capture_cancel: None,
+            editor_window: None,
+            capture_window_guard: None,
+            last_capture: None,
+            thumbnail: CaptureThumbnail::default(),
             screen_access_open: false,
             screen_access_status: capture::PermissionStatus::Unknown,
             saved_revision: 0,
@@ -313,6 +343,8 @@ impl Framecraft {
             desktop_attempted: false,
             shortcuts_settings: ShortcutSettings::load().unwrap_or_default(),
             quick_settings: QuickCaptureSettings::default(),
+            quick_shortcut_state: QuickShortcutState::Off,
+            offer_shortcut_try: false,
             setup: None,
             settings_open: false,
             settings_error: None,
@@ -454,7 +486,7 @@ impl Framecraft {
     fn finish_setup(&mut self, mut candidate: QuickCaptureSettings) -> Result<(), String> {
         candidate.setup_complete = true;
         candidate.validate(&self.shortcuts_settings)?;
-        if candidate.after_capture == AfterCapture::Save {
+        if candidate.after_capture.saves_file() {
             std::fs::create_dir_all(&candidate.destination)
                 .map_err(|e| format!("Could not create save folder: {e}"))?;
             capture::probe_destination(&candidate.destination).map_err(|e| e.to_string())?;
@@ -466,22 +498,39 @@ impl Framecraft {
         let shortcut = candidate
             .shortcut_enabled
             .then_some(candidate.shortcut.as_str());
-        controls.configure_quick_capture(shortcut)?;
-        if let Err(error) = candidate.save(&self.shortcuts_settings) {
-            let previous = (self.quick_settings.setup_complete
-                && self.quick_settings.shortcut_enabled)
-                .then_some(self.quick_settings.shortcut.as_str());
-            return match controls.configure_quick_capture(previous) {
-                Ok(()) => Err(error),
-                Err(rollback) => Err(format!("{error}. Previous shortcut could not be restored: {rollback}. Quit and reopen Framecraft before retrying.")),
-            };
+        let warning =
+            controls.commit_quick_capture(shortcut, || candidate.save(&self.shortcuts_settings))?;
+        self.quick_shortcut_state = if candidate.shortcut_enabled {
+            QuickShortcutState::Active
+        } else {
+            QuickShortcutState::Off
+        };
+        controls.set_quick_shortcut_status(self.quick_shortcut_state, &candidate.shortcut_label());
+        self.offer_shortcut_try = candidate.shortcut_enabled;
+        if !candidate.show_thumbnail || !candidate.after_capture.stays_in_source() {
+            self.thumbnail.hide();
         }
         self.quick_settings = candidate;
-        self.notify(
-            "Capture setup saved. Use your shortcut or Capture Area to begin.",
-            false,
-        );
+        if let Some(warning) = warning {
+            self.notify(warning, true);
+        } else {
+            self.notify("Capture setup saved.", false);
+        }
         Ok(())
+    }
+    fn rehearse_shortcut(&mut self) {
+        self.offer_shortcut_try = false;
+        let output = match self.quick_settings.after_capture {
+            AfterCapture::Edit => "The selection opens in the editor.".into(),
+            AfterCapture::Save | AfterCapture::SaveAndReturn => format!(
+                "Your PNG goes into {}.",
+                self.quick_settings.destination.display()
+            ),
+            AfterCapture::CopyAndReturn => {
+                "Press Command + V in that app to paste the selection.".into()
+            }
+        };
+        self.notify(format!("Switch to another app and press {}. Drag to capture or press Escape to cancel. {output} Reopen Capture setup from the menu bar to make changes.", self.quick_settings.shortcut_label()), false);
     }
     fn open_settings(&mut self) {
         if self.setup.is_some() || self.text_draft.is_some() {
@@ -494,7 +543,7 @@ impl Framecraft {
         }
     }
     fn capture_available(&self) -> bool {
-        self.editor_mutation_allowed() && !self.session.active()
+        self.editor_mutation_allowed() && !self.session.active() && self.selecting_display.is_none()
     }
     fn capture(&mut self, ctx: &egui::Context, mode: CaptureMode) {
         self.capture_with_permission(ctx, mode, capture::permission_status);
@@ -552,13 +601,18 @@ impl Framecraft {
             );
             return;
         }
+        if self.editor_window.is_none() {
+            self.notify("Framecraft could not prepare its window for capture. Reopen the app and try again.", true);
+            return;
+        }
         if !self.check_screen_access(capture::permission_status()) {
+            handoff::show_editor(ctx);
             return;
         }
         let cancel = Arc::new(AtomicBool::new(false));
         self.capture_cancel = Some(cancel.clone());
-        ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
-        let restore = ctx.clone();
+        self.thumbnail.hide();
+        self.capture_window_guard = self.editor_window.as_ref().map(EditorWindow::begin_capture);
         let preferences = self.quick_settings.clone();
         self.start_job(
             ctx,
@@ -566,34 +620,21 @@ impl Framecraft {
             move || {
                 // Give the compositor a moment to remove our editor from the desktop.
                 std::thread::sleep(Duration::from_millis(350));
-                let result = capture::capture_cancellable(mode, &|| cancel.load(Ordering::Acquire))
-                    .map(|pixels| {
-                        if cancel.load(Ordering::Acquire) {
-                            return Outcome::Captured(None);
-                        }
-                        match pixels {
-                            Some(pixels)
-                                if preferences.setup_complete
-                                    && preferences.after_capture == AfterCapture::Save =>
-                            {
-                                match quick_capture::save_capture_cancellable(
-                                    &pixels,
-                                    &preferences,
-                                    &|| cancel.load(Ordering::Acquire),
-                                ) {
-                                    Ok(Some(path)) => Outcome::AutoSaved(pixels, Ok(path)),
-                                    Ok(None) => Outcome::Captured(None),
-                                    Err(error) => Outcome::AutoSaved(pixels, Err(error)),
-                                }
-                            }
-                            pixels => Outcome::Captured(pixels),
-                        }
-                    });
-                restore.send_viewport_cmd(egui::ViewportCommand::Visible(true));
-                restore.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
-                restore.send_viewport_cmd(egui::ViewportCommand::Focus);
-                restore.request_repaint();
-                result
+                let cancelled = || cancel.load(Ordering::Acquire);
+                let placement = ThumbnailPlacement::before_selection(mode);
+                let pixels = capture::capture_cancellable(mode, &cancelled)?;
+                let placement = if pixels.is_some() {
+                    placement.confirm_after_selection(mode)
+                } else {
+                    ThumbnailPlacement::Unavailable
+                };
+                Ok(handoff::finish_capture(
+                    placement,
+                    pixels,
+                    &preferences,
+                    &cancelled,
+                    framecraft::native_handoff::copy_image_local,
+                ))
             },
         );
     }
@@ -776,7 +817,10 @@ impl Framecraft {
         });
         if let Some(result) = completed {
             self.job = None;
-            self.capture_cancel = None;
+            let was_one_off = self.capture_cancel.take().is_some();
+            // Restore only the pre-capture presentation. Foregrounding the
+            // editor is a separate decision, made below for edit routes.
+            self.capture_window_guard.take();
             match result {
                 Ok(Outcome::RegionSource(pixels, display, epoch)) => {
                     if epoch != self.source_epoch || self.session.active() {
@@ -819,11 +863,15 @@ impl Framecraft {
                 }
                 Ok(Outcome::Loaded(pixels, name)) => self.load(ctx.clone(), pixels, name),
                 Ok(Outcome::Captured(Some(pixels))) => {
+                    self.last_capture = None;
                     self.load(ctx.clone(), pixels, "New capture".into());
                     self.fresh_capture = true;
+                    handoff::show_editor(ctx);
                 }
                 Ok(Outcome::AutoSaved(pixels, saved)) => {
+                    self.last_capture = None;
                     self.load(ctx.clone(), pixels, "New capture".into());
+                    handoff::show_editor(ctx);
                     match saved {
                         Ok(path) => {
                             self.name = path
@@ -846,6 +894,7 @@ impl Framecraft {
                     }
                 }
                 Ok(Outcome::Captured(None)) => self.notify("Capture cancelled.", false),
+                Ok(Outcome::Direct(capture)) => self.receive_direct_capture(ctx, capture),
                 Ok(Outcome::Exported(path, revision)) => {
                     if revision == self.revision {
                         self.saved_revision = revision;
@@ -917,8 +966,18 @@ impl Framecraft {
                     self.continue_after_save = false;
                     self.pack_cancel = None;
                     self.pack_progress = None;
-                    self.notify(error, true);
+                    if was_one_off {
+                        handoff::show_editor(ctx);
+                        self.notify(format!("Capture failed before output: {error}"), true);
+                    } else {
+                        self.notify(error, true);
+                    }
                 }
+            }
+            if was_one_off {
+                // A background result may be the final repaint. Publish the
+                // receipt now so a failure is visible without opening a menu.
+                self.sync_last_capture_controls();
             }
         }
         let rendered = self
@@ -1308,6 +1367,12 @@ impl Framecraft {
                                 for (label, mode) in [("Capture Window…", CaptureMode::Window), ("Capture Screen", CaptureMode::Screen)] {
                                     if ui.button(label).clicked() { ui.close_menu(); self.capture(ctx, mode); }
                                 }
+                                if self.last_capture.is_some() {
+                                    ui.separator();
+                                    if ui.button("Edit Last Capture…").clicked() { ui.close_menu(); self.edit_last_capture(ctx); }
+                                    if self.last_capture.as_ref().is_some_and(handoff::LastCapture::failed) && ui.button("Retry Last Output").clicked() { ui.close_menu(); self.retry_last_output(ctx); }
+                                    if ui.button("Clear Last Capture").clicked() { ui.close_menu(); self.clear_last_capture(); }
+                                }
                             });
                             if ui_icons::button(ui,"Capture Area…",Icon::Capture,false)
                                 .on_hover_text("Draw a rectangle on screen. Escape cancels. Command + Option + 4.").clicked() {
@@ -1336,6 +1401,7 @@ impl Framecraft {
                     });
                     ui.label("After allowing access, quit and reopen Framecraft if macOS requests it. Capture starts only when you explicitly retry.");
                     ui.collapsing("Which copy is running?", |ui| {
+                        ui.label(concat!("Framecraft ", env!("CARGO_PKG_VERSION")));
                         if let Ok(path) = std::env::current_exe() { ui.label(path.display().to_string()); }
                         ui.label("Use the copy in Applications. A Terminal or IDE launch can have a different permission identity. Updates to an ad-hoc-signed beta may require renewed approval.");
                     });
@@ -1756,11 +1822,10 @@ impl Framecraft {
             });
             ui.add_space(22.0);
             if self.quick_settings.setup_complete {
-                ui.label(if self.quick_settings.shortcut_enabled {
-                    format!("Your area shortcut: {}", self.quick_settings.shortcut)
-                } else {
-                    "Capture buttons are ready. Everyday shortcut is off.".into()
-                });
+                ui.label(
+                    self.quick_shortcut_state
+                        .description(&self.quick_settings.shortcut_label()),
+                );
             } else if ui_icons::button(ui, "Set up shortcuts & saving", Icon::Settings, false)
                 .clicked()
             {
@@ -2026,7 +2091,10 @@ impl Framecraft {
             self.notify("Wait for the current operation to finish.", true);
             return;
         }
-        if self.doc.is_some()
+        let replaces_document = !matches!(action, Pending::Capture(_))
+            || !self.quick_settings.capture_action().stays_in_source();
+        if replaces_document
+            && self.doc.is_some()
             && (self.fresh_capture || self.revision != self.saved_revision)
             && self.selecting_display.is_none()
         {
@@ -2051,6 +2119,7 @@ impl Framecraft {
                 });
             }
             Pending::CloseScreenshot => self.close_screenshot(),
+            Pending::EditLastCapture => self.open_last_capture(ctx),
             Pending::Quit => {
                 self.session.desktop_action(DesktopAction::Stop, ctx);
                 self.closing = true;
@@ -2725,30 +2794,62 @@ impl Framecraft {
             match DesktopControls::new(move || wake.request_repaint()) {
                 Ok(mut controls) => {
                     if self.quick_settings.setup_complete && self.quick_settings.shortcut_enabled {
-                        if let Err(error) =
-                            controls.configure_quick_capture(Some(&self.quick_settings.shortcut))
+                        match controls.configure_quick_capture(Some(&self.quick_settings.shortcut))
                         {
-                            self.notify(format!("Everyday shortcut unavailable: {error} Open Capture setup to choose another."), true);
+                            Ok(()) => self.quick_shortcut_state = QuickShortcutState::Active,
+                            Err(error) => {
+                                self.quick_shortcut_state = QuickShortcutState::Unavailable;
+                                self.notify(format!("Everyday shortcut unavailable: {error} Open Capture setup to choose another."), true);
+                            }
                         }
                     }
+                    controls.set_quick_shortcut_status(
+                        self.quick_shortcut_state,
+                        &self.quick_settings.shortcut_label(),
+                    );
                     self.desktop = Some(controls);
                 }
-                Err(error) => self.notify(error, true),
+                Err(error) => {
+                    if self.quick_settings.setup_complete && self.quick_settings.shortcut_enabled {
+                        self.quick_shortcut_state = QuickShortcutState::Unavailable;
+                    }
+                    self.notify(error, true);
+                }
             }
         }
         let capture_available = self.capture_available();
+        if !capture_available {
+            self.thumbnail.hide();
+        }
         let close_available = self.doc.is_some() && self.editor_mutation_allowed();
-        let actions = if let Some(controls) = &mut self.desktop {
-            let actions = controls.poll();
+        let mut actions = if let Some(controls) = &mut self.desktop {
+            let actions = controls.poll_with_capture_hide(|| self.thumbnail.hide());
+            // Carbon owns the active binding, so recording the same chord
+            // cannot rely on a second key-down arriving in the egui window.
+            if controls.suppressed_quick_press() && ctx.input(|i| i.focused) {
+                if let Some(draft) = &mut self.setup {
+                    draft.offer_registered_stroke(&self.quick_settings);
+                }
+            }
             let (state, count, source) = self.session.desktop_status();
             controls.update(state, count, &source);
             controls.set_capture_available(capture_available);
             controls.set_close_available(close_available);
+            controls.set_last_capture(
+                self.last_capture.as_ref().map(handoff::LastCapture::status),
+                capture_available,
+            );
             controls.set_capture_cancellable(self.capture_cancel.is_some());
             actions
         } else {
             vec![]
         };
+        if let Some(action) = self.thumbnail.take_action() {
+            actions.push(match action {
+                ThumbnailAction::Edit => DesktopAction::EditLastCapture,
+                ThumbnailAction::Clear => DesktopAction::ClearLastCapture,
+            });
+        }
         for action in actions {
             if self.closing {
                 continue;
@@ -2758,6 +2859,18 @@ impl Framecraft {
                 continue;
             }
             match action {
+                DesktopAction::EditLastCapture => {
+                    self.edit_last_capture(ctx);
+                    continue;
+                }
+                DesktopAction::ClearLastCapture => {
+                    self.clear_last_capture();
+                    continue;
+                }
+                DesktopAction::RetryLastOutput => {
+                    self.retry_last_output(ctx);
+                    continue;
+                }
                 DesktopAction::CloseScreenshot => {
                     if self.doc.is_some() && self.editor_mutation_allowed() {
                         self.request(ctx, Pending::CloseScreenshot);
@@ -2922,7 +3035,7 @@ impl Framecraft {
                 ui.label("Copying does not save a file. Save a PNG, discard this unsaved result, or cancel to keep editing.");
                 ui.add_enabled_ui(self.job.is_none(),|ui| {ui.horizontal(|ui| {
                     if ui.button("Save PNG…").clicked() {self.continue_after_save=true;if self.editing_capture.is_some(){self.save_edited_copy(ctx);}else{self.export(ctx,false);}}
-                    if ui.button("Discard changes").clicked() {self.continue_after_save=false;self.saved_revision=self.revision;if let Some(action)=self.pending.take(){self.execute(ctx,action);}}
+                    if ui.button("Discard changes").clicked() {self.continue_after_save=false;if let Some(action)=self.pending.take(){self.execute(ctx,action);}}
                     if ui.button("Cancel").clicked() {self.pending=None;self.continue_after_save=false;}
                 });});
             });
@@ -3031,6 +3144,7 @@ impl Framecraft {
                 .show(ctx, |ui| {
                     ui.label("Command (⌘) and Option (⌥) are the keys beside the space bar.");
                     ui.label(RichText::new("You can always use the Capture Area button or menu bar icon.").color(MUTED));
+                    ui.label(self.quick_shortcut_state.description(&self.quick_settings.shortcut_label()));
                     ui.add_space(12.0);
                     ui.strong("Screenshot commands");
                     ui.label(RichText::new("While Framecraft is the active application").small().color(MUTED));
@@ -3045,9 +3159,9 @@ impl Framecraft {
                     if self.session.active() { ui.label("Stop the session before changing these shortcuts."); }
                     let draft = self.shortcut_draft.get_or_insert_with(|| self.shortcuts_settings.clone());
                     ui.add_enabled_ui(!self.session.active(), |ui| {
-                        shortcut_editor(ui, "Capture next frame", &mut draft.capture);
-                        shortcut_editor(ui, "Pause or resume", &mut draft.pause_resume);
-                        shortcut_editor(ui, "Stop collection", &mut draft.stop);
+                        shortcut_editor(ui, "Capture next frame", &mut draft.capture, 24);
+                        shortcut_editor(ui, "Pause or resume", &mut draft.pause_resume, 24);
+                        shortcut_editor(ui, "Stop collection", &mut draft.stop, 24);
                     });
                     if let Some(error) = &self.settings_error { ui.colored_label(Color32::from_rgb(177, 39, 35), error); }
                     ui.add_space(12.0);
@@ -3096,7 +3210,12 @@ fn install_mac_font(_ctx: &egui::Context) {
     }
 }
 
-pub(super) fn shortcut_editor(ui: &mut egui::Ui, label: &str, value: &mut String) {
+pub(super) fn shortcut_editor(
+    ui: &mut egui::Ui,
+    label: &str,
+    value: &mut String,
+    last_function_key: u8,
+) {
     ui.push_id(label, |ui| {
         let Ok(mut parts) = framecraft::settings::ShortcutParts::parse(value) else {
             ui.label(format!(
@@ -3112,14 +3231,14 @@ pub(super) fn shortcut_editor(ui: &mut egui::Ui, label: &str, value: &mut String
             ui.checkbox(&mut parts.option, "Option");
             ui.checkbox(&mut parts.control, "Control");
             ui.checkbox(&mut parts.shift, "Shift");
-            egui::ComboBox::from_id_salt("key")
+            egui::ComboBox::from_label("Key")
                 .selected_text(&parts.key)
                 .width(56.0)
                 .show_ui(ui, |ui| {
                     for key in ('A'..='Z')
                         .map(|c| c.to_string())
                         .chain((0..=9).map(|n| n.to_string()))
-                        .chain((1..=24).map(|n| format!("F{n}")))
+                        .chain((1..=last_function_key).map(|n| format!("F{n}")))
                     {
                         ui.selectable_value(&mut parts.key, key.clone(), key);
                     }
@@ -3230,6 +3349,12 @@ impl eframe::App for Framecraft {
                     if self.job.is_some() {
                         ui.spinner();
                     }
+                    if self.offer_shortcut_try
+                        && self.editor_mutation_allowed()
+                        && ui.button("Try your shortcut").clicked()
+                    {
+                        self.rehearse_shortcut();
+                    }
                     ui.label(RichText::new(&self.status).small().color(if self.error {
                         Color32::from_rgb(177, 39, 35)
                     } else {
@@ -3260,7 +3385,7 @@ impl eframe::App for Framecraft {
         }
         self.dialogs(ctx, frame);
         if let Some(mut draft) = self.setup.take() {
-            match draft.show(ctx) {
+            match draft.show(ctx, &self.shortcuts_settings) {
                 SetupAction::Cancel => {}
                 SetupAction::Finish => {
                     if let Err(error) = self.finish_setup(draft.settings.clone()) {

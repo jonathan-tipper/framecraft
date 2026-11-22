@@ -1,6 +1,6 @@
 //! First-run preferences and collision-safe output for one-off screenshots.
 
-use crate::settings::{canonical_key, display_shortcut, ShortcutSettings};
+use crate::settings::{canonical_key, display_shortcut, ShortcutParts, ShortcutSettings};
 use image::RgbaImage;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -14,7 +14,18 @@ use std::{
 pub enum AfterCapture {
     #[default]
     Edit,
+    // Existing preferences use "Save" for save-then-open.
     Save,
+    CopyAndReturn,
+    SaveAndReturn,
+}
+impl AfterCapture {
+    pub fn stays_in_source(self) -> bool {
+        matches!(self, Self::CopyAndReturn | Self::SaveAndReturn)
+    }
+    pub fn saves_file(self) -> bool {
+        matches!(self, Self::Save | Self::SaveAndReturn)
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -22,11 +33,20 @@ pub enum AfterCapture {
 pub struct QuickCaptureSettings {
     pub setup_complete: bool,
     pub shortcut_enabled: bool,
+    /// Physical key position used by macOS global registration.
     pub shortcut: String,
+    /// Key legend on the keyboard layout used when recording, when different.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recorded_key_label: Option<String>,
     pub destination: PathBuf,
     pub filename_prefix: String,
     pub organise_by_date: bool,
     pub after_capture: AfterCapture,
+    #[serde(default = "default_show_thumbnail")]
+    pub show_thumbnail: bool,
+}
+fn default_show_thumbnail() -> bool {
+    true
 }
 impl Default for QuickCaptureSettings {
     fn default() -> Self {
@@ -34,6 +54,7 @@ impl Default for QuickCaptureSettings {
             setup_complete: false,
             shortcut_enabled: true,
             shortcut: "Command + Shift + 2".into(),
+            recorded_key_label: None,
             destination: std::env::var_os("HOME")
                 .map(PathBuf::from)
                 .unwrap_or_default()
@@ -41,17 +62,50 @@ impl Default for QuickCaptureSettings {
             filename_prefix: "Screenshot".into(),
             organise_by_date: false,
             after_capture: AfterCapture::Edit,
+            show_thumbnail: default_show_thumbnail(),
         }
     }
 }
 impl QuickCaptureSettings {
+    pub fn capture_action(&self) -> AfterCapture {
+        if self.setup_complete {
+            self.after_capture
+        } else {
+            AfterCapture::Edit
+        }
+    }
     pub fn validate(&self, session: &ShortcutSettings) -> Result<(), String> {
         self.validate_output()?;
+        self.shortcut_parts()?;
+        if self.shortcut_enabled {
+            self.validate_shortcut(session)?;
+        }
+        Ok(())
+    }
+    pub fn validate_shortcut(&self, session: &ShortcutSettings) -> Result<(), String> {
         let key = canonical_quick_shortcut(&self.shortcut)?;
-        if self.shortcut_enabled && session.canonical_keys()?.contains(&key) {
+        canonical_quick_shortcut(&self.shortcut_parts()?.display())?;
+        if session.canonical_keys()?.contains(&key) {
             return Err("The capture shortcut is already used by a session command. Choose another combination.".into());
         }
         Ok(())
+    }
+    fn shortcut_parts(&self) -> Result<ShortcutParts, String> {
+        let mut parts = ShortcutParts::parse(&self.shortcut)?;
+        if let Some(label) = &self.recorded_key_label {
+            let labelled = ShortcutParts::parse(&format!("Command + {label}"))?;
+            if labelled.key != *label {
+                return Err("Choose the shortcut key again in Capture setup.".into());
+            }
+            parts.key.clone_from(label);
+        }
+        Ok(parts)
+    }
+    pub fn shortcut_label(&self) -> String {
+        self.shortcut_parts().map_or_else(
+            |_| "Choose a shortcut".into(),
+            |parts| format!("{} ({})", parts.symbols(), parts.display()),
+        )
     }
     fn validate_output(&self) -> Result<(), String> {
         if !self.destination.is_absolute()
@@ -88,9 +142,20 @@ impl QuickCaptureSettings {
         Self::load_from(&Self::path()?, session)
     }
     pub fn load_from(path: &Path, session: &ShortcutSettings) -> Result<Self, String> {
+        let (settings, _) = Self::load_with_review(path, session)?;
+        Ok(settings)
+    }
+    /// A legacy global binding may now be reserved. Keep file and output
+    /// choices, quarantine the binding in memory and let setup explain why.
+    pub fn load_with_review(
+        path: &Path,
+        session: &ShortcutSettings,
+    ) -> Result<(Self, Option<String>), String> {
         let bytes = match fs::read(path) {
             Ok(bytes) => bytes,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Self::default()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                return Ok((Self::default(), None))
+            }
             Err(e) => return Err(format!("Could not read capture settings: {e}")),
         };
         if bytes.len() > 16384 {
@@ -100,9 +165,18 @@ impl QuickCaptureSettings {
         }
         let mut value: Self = serde_json::from_slice(&bytes)
             .map_err(|e| format!("Could not read capture settings: {e}"))?;
-        value.validate(session)?;
+        value.validate_output()?;
         value.shortcut = display_shortcut(&value.shortcut)?;
-        Ok(value)
+        value.shortcut_parts()?;
+        let review = if value.shortcut_enabled {
+            value.validate_shortcut(session).err().map(|reason| {
+                value.shortcut_enabled = false;
+                format!("Review your previous shortcut. {reason} Capture Area is available from the menu bar.")
+            })
+        } else {
+            None
+        };
+        Ok((value, review))
     }
     pub fn save(&self, session: &ShortcutSettings) -> Result<(), String> {
         self.save_to(&Self::path()?, session)
@@ -126,9 +200,53 @@ impl QuickCaptureSettings {
 /// Validation shared by preferences and the native registration boundary.
 pub(crate) fn canonical_quick_shortcut(value: &str) -> Result<String, String> {
     let key = canonical_key(value)?;
+    let parts = ShortcutParts::parse(&key)?;
+    let printable = parts.key.len() == 1;
+    if matches!(parts.key.as_str(), "F21" | "F22" | "F23" | "F24") {
+        return Err("Choose a Mac function key from F1 to F20.".into());
+    }
+    if printable && !parts.command && !parts.control {
+        return Err(
+            "That combination types a character. Add Command or Control, or choose a function key."
+                .into(),
+        );
+    }
+    if printable
+        && parts.key.as_bytes()[0].is_ascii_alphabetic()
+        && parts.control
+        && !parts.command
+        && !parts.option
+        && !parts.shift
+    {
+        return Err(
+            "Control with a letter is used for text editing and Terminal. Add another modifier."
+                .into(),
+        );
+    }
+    let system_capture = parts.command
+        && parts.shift
+        && !parts.option
+        && matches!(parts.key.as_str(), "3" | "4" | "5" | "6");
     if matches!(
         key.as_str(),
-        "Super+KeyQ"
+        "Super+KeyA"
+            | "Super+KeyB"
+            | "Super+KeyC"
+            | "Super+KeyF"
+            | "Super+KeyI"
+            | "Super+KeyN"
+            | "Super+KeyP"
+            | "Super+KeyT"
+            | "Super+KeyU"
+            | "Super+KeyV"
+            | "Super+KeyW"
+            | "Super+KeyX"
+            | "Super+KeyY"
+            | "Super+Shift+KeyV"
+            | "Super+Alt+KeyC"
+            | "Super+Alt+KeyV"
+            | "Super+Alt+Shift+KeyV"
+            | "Super+KeyQ"
             | "Super+KeyO"
             | "Super+KeyS"
             | "Super+KeyZ"
@@ -139,10 +257,8 @@ pub(crate) fn canonical_quick_shortcut(value: &str) -> Result<String, String> {
             | "Super+Alt+Digit3"
             | "Super+Alt+Digit4"
             | "Super+Alt+Digit5"
-            | "Super+Shift+Digit3"
-            | "Super+Shift+Digit4"
-            | "Super+Shift+Digit5"
-    ) {
+    ) || system_capture
+    {
         return Err(format!(
             "{} is reserved by Framecraft or macOS. Choose another shortcut.",
             display_shortcut(value)?
@@ -313,6 +429,25 @@ mod tests {
         }
     }
     #[test]
+    fn capture_modes_round_trip_and_existing_edit_preferences_keep_their_meaning() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("quick.json");
+        for mode in ["Edit", "Save", "CopyAndReturn", "SaveAndReturn"] {
+            let mut fixture = serde_json::to_value(settings(directory.path())).unwrap();
+            fixture["after_capture"] = mode.into();
+            fixture["setup_complete"] = true.into();
+            fixture.as_object_mut().unwrap().remove("show_thumbnail");
+            std::fs::write(&path, serde_json::to_vec(&fixture).unwrap()).unwrap();
+            let loaded = QuickCaptureSettings::load_from(&path, &ShortcutSettings::default())
+                .expect("load previously saved or new capture mode");
+            loaded.save_to(&path, &ShortcutSettings::default()).unwrap();
+            let saved: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+            assert_eq!(saved["after_capture"], mode);
+            assert_eq!(saved["show_thumbnail"], true);
+        }
+    }
+    #[test]
     fn settings_round_trip_without_touching_session_preferences() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("quick.json");
@@ -370,6 +505,77 @@ mod tests {
         std::fs::write(&path, b"broken").unwrap();
         assert!(QuickCaptureSettings::load_from(&path, &ShortcutSettings::default()).is_err());
         assert_eq!(std::fs::read(path).unwrap(), b"broken");
+    }
+    #[test]
+    fn everyday_shortcuts_leave_typing_editing_and_system_capture_available() {
+        let mut value = settings(Path::new("/tmp"));
+        for key in [
+            "Shift+A",
+            "Option+E",
+            "Option+Shift+2",
+            "Ctrl+C",
+            "Ctrl+A",
+            "Control+F21",
+            "Cmd+C",
+            "Cmd+V",
+            "Cmd+X",
+            "Cmd+A",
+            "Cmd+W",
+            "Cmd+F",
+            "Command+Shift+V",
+            "Command+Shift+6",
+            "Control+Shift+Command+4",
+        ] {
+            value.shortcut = key.into();
+            assert!(
+                value.validate(&ShortcutSettings::default()).is_err(),
+                "{key}"
+            );
+        }
+        for key in ["Command+Shift+2", "Control+Shift+F9", "Command+Option+9"] {
+            value.shortcut = key.into();
+            value.validate(&ShortcutSettings::default()).unwrap();
+        }
+    }
+    #[test]
+    fn an_unsafe_legacy_binding_keeps_output_settings_until_explicitly_reviewed() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("quick.json");
+        let mut legacy = settings(dir.path());
+        legacy.setup_complete = true;
+        legacy.filename_prefix = "Evidence".into();
+        legacy.shortcut = "Super+KeyC".into();
+        let original = serde_json::to_vec(&legacy).unwrap();
+        fs::write(&path, &original).unwrap();
+        let (mut loaded, warning) =
+            QuickCaptureSettings::load_with_review(&path, &ShortcutSettings::default()).unwrap();
+        assert!(warning.unwrap().contains("Review your previous shortcut"));
+        assert!(!loaded.shortcut_enabled);
+        assert!(loaded.setup_complete);
+        assert_eq!(loaded.filename_prefix, "Evidence");
+        assert_eq!(fs::read(&path).unwrap(), original);
+        loaded.save_to(&path, &ShortcutSettings::default()).unwrap();
+        assert!(
+            QuickCaptureSettings::load_with_review(&path, &ShortcutSettings::default())
+                .unwrap()
+                .1
+                .is_none()
+        );
+        loaded.shortcut_enabled = true;
+        assert!(loaded.validate(&ShortcutSettings::default()).is_err());
+    }
+    #[test]
+    fn recorded_key_keeps_its_physical_position_and_labels_the_layout_key() {
+        let mut value = settings(Path::new("/tmp"));
+        value.shortcut = "Control + Shift + Q".into();
+        value.recorded_key_label = Some("A".into());
+        value.validate(&ShortcutSettings::default()).unwrap();
+        assert_eq!(value.shortcut_label(), "⌃⇧A (Control + Shift + A)");
+        value.shortcut = "Command + J".into();
+        assert!(
+            value.validate(&ShortcutSettings::default()).is_err(),
+            "logical Command+A would shadow Select All"
+        );
     }
     #[test]
     fn captures_keep_original_pixels_and_never_overwrite_collisions() {
