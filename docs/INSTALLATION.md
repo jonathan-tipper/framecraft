@@ -1,6 +1,6 @@
 # Install Framecraft on a Mac
 
-Beta 6 adds capture-to-paste and shortcut recording. The current GitHub download is the earlier Apple silicon beta 2. A beta 6 file ending in `-development.dmg` is an internal, ad-hoc-signed test build. A Developer ID beta is published only after Apple notarisation, ticket stapling and Gatekeeper assessment. Check the actual build status in [release #35](https://github.com/jonathan-tipper/framecraft/issues/35).
+Beta 6 adds capture-to-paste and shortcut recording. Beta 2 is the latest published installer. Maintainers can download the beta 6 Apple silicon DMG and its checksum from the private development draft. That copy has an ad-hoc signature and Gatekeeper may block it. For a clean install on another MacBook, use the Developer ID installer once the release issue records Apple notarisation and Gatekeeper verification. [Development draft](https://github.com/jonathan-tipper/framecraft/releases/tag/untagged-1718d416b78610f78c6f) · [Signed installer status](https://github.com/jonathan-tipper/framecraft/issues/35)
 
 ## Install or update on a MacBook
 
@@ -15,7 +15,7 @@ Developer ID signing, Apple notarisation and Screen Recording consent are separa
 
 macOS controls access to screen pixels. In **System Settings → Privacy & Security → Screen & System Audio Recording**, allow Framecraft. Older macOS versions call this **Screen Recording**. Quit and reopen Framecraft if requested, then explicitly retry the capture. The app cannot approve this permission for you.
 
-In beta 4 development builds, use **More Capture → Screen Access… → Request Access** to ask macOS for access from Framecraft itself. **Open System Settings** opens the relevant privacy pane. **Check Again** reads the current permission; it does not start a screenshot. A blocked capture opens this panel before hiding the window. Existing screenshots and edits remain available.
+In beta 6, use **More Capture → Screen Access… → Request Access** to ask macOS for access from Framecraft itself. **Open System Settings** opens the relevant privacy pane. **Check Again** reads the current permission. A blocked capture opens this panel before hiding the window. Existing screenshots and edits remain available.
 
 If Framecraft is absent from the privacy list, use the **+** button and select `/Applications/Framecraft.app`. Quit other copies, including the one on a mounted DMG, and launch the installed app. If macOS requires a restart after approval, quit and reopen Framecraft before retrying. If the switch is unavailable on a managed Mac, ask its administrator about the screen-recording policy.
 

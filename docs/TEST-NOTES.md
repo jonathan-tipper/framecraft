@@ -19,6 +19,8 @@ The [native thumbnail image](evidence/beta6-native/thumbnail.png) contains only 
 
 The local development DMG has SHA-256 `ad6d5a94055572f802be1afefdb63c9634865ea59b30f887ee0e44c1bceb79cc`. Independently built CI images carry their own checksum. The local signature reports `adhoc` and no team identifier. The Mac keychain returned zero valid code-signing identities. GitHub had no release environment, repository signing secrets or self-hosted runner configured. The distribution packager rejected missing, ad-hoc and unavailable identities. Apple notarisation and a Developer ID installation are pending in [#35](https://github.com/jonathan-tipper/framecraft/issues/35).
 
+The DMG and its checksum were downloaded again from the private GitHub draft. The downloaded bytes matched the digest above and passed `hdiutil verify`. The macOS 15 check on commit `f1d1182` recorded zero test steps because the repository's Actions budget blocked the job before a runner started. [Development draft](https://github.com/jonathan-tipper/framecraft/releases/tag/untagged-1718d416b78610f78c6f) · [Hosted check](https://github.com/jonathan-tipper/framecraft/actions/runs/44971550696/job/137052236852)
+
 The private pasteboard, addressed Carbon event and native fixtures establish separate parts of the flow. The physical shortcut → system selector → immediate ⌘V sequence in a foreground document, actual mouse-release latency, second-Mac install/upgrade and consent, multiple physical displays, a second installed keyboard layout and VoiceOver remain open. Use the [MacBook test procedure](TESTING.md#beta-6-shortcut-and-paste-on-another-mac) with the exact distributed DMG.
 
 # Everyday capture candidate: 0.3.0-beta.5
