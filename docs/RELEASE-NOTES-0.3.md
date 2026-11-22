@@ -1,3 +1,13 @@
+# 0.3.0-beta.6 capture and shortcut candidate
+
+- **Copy and return** places the selected pixels on this Mac’s clipboard for pasting in the source app. **Save and return** writes a named PNG and retains the clipboard. Both offer **Edit Last Capture…** from the menu bar. Existing editor-opening preferences carry over.
+- **Record shortcut** accepts an actual key combination. A labelled picker and **Use menu bar only** provide alternatives. Settings and the status menu show the binding that registered. A conflict or failed save retains the previously working key.
+- **Screen Access** displays the running version and executable path. Development DMGs have a distinct filename. The Developer ID release path validates the signed, notarised app and DMG before producing distribution artefacts.
+
+On multiple displays, interactive area and window grabs skip the thumbnail when display identity is ambiguous. The menu still provides **Edit Last Capture…**. macOS can report an exclusive shortcut conflict. Other utilities using shared registrations can accept the same keys, so the setup includes a rehearsal in the intended source app.
+
+See the [MacBook acceptance check](TESTING.md#beta-6-shortcut-and-paste-on-another-mac), [evidence](TEST-NOTES.md) and [distribution status](https://github.com/jonathan-tipper/framecraft/issues/35).
+
 # 0.3.0-beta.5: everyday capture and text correction (unreleased)
 
 - Text opens a focused draft after placement, with explicit Add/Apply/Cancel, double-click editing and atomic undo. Step controls are separate.

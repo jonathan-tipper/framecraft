@@ -31,8 +31,7 @@ objc2-foundation = { version = "0.3.2", default-features = false, features = ["s
 objc2-vision = { version = "0.3.2", default-features = false, features = ["std", "VNRequest", "VNRequestHandler", "VNRecognizeTextRequest", "VNObservation", "VNTypes", "objc2-core-foundation"] }
 
 [target.'cfg(target_os = "macos")'.dev-dependencies]
-objc2-app-kit = { version = "0.3.2", default-features = false, features = ["NSWorkspace", "NSRunningApplication", "NSText", "NSTextView", "NSBitmapImageRep", "NSImageRep", "libc"] }
-objc2-foundation = { version = "0.3.2", default-features = false, features = ["NSRunLoop", "NSDate"] }
+objc2-app-kit = { version = "0.3.2", default-features = false, features = ["NSWorkspace", "NSRunningApplication", "NSText", "NSTextView", "NSBitmapImageRep", "NSImageRep", "NSColor", "NSColorSpace", "libc"] }
 
 [profile.release]
 lto = "thin"

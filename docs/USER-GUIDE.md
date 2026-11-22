@@ -1,12 +1,12 @@
 # Framecraft 0.3 user guide
 
-This guide follows the unreleased 0.3.0-beta.3 native editor development build. The editor changes below are not present in an older installed beta 2. Start with synthetic content and consult [the current test notes](TEST-NOTES.md) for observed results and unperformed checks. [Historical beta 2 results on GitHub](https://github.com/jonathan-tipper/framecraft/blob/v0.3.0-beta.2/docs/TEST-NOTES.md) remain a separate record.
+This guide follows the beta 6 candidate. For a test report, include the version and running-copy path shown in **More Capture → Screen Access… → Which copy is running?** Check which builds and flows have been exercised in the [test notes](TEST-NOTES.md).
 
 ## Install and take a screenshot
 
-Install from the DMG by dragging Framecraft onto Applications, then open it there. This is an ad-hoc signed beta; see the [installation guide on GitHub](https://github.com/jonathan-tipper/framecraft/blob/v0.3.0-beta.2/docs/INSTALLATION.md) for first-launch and update instructions.
+Drag Framecraft from the disk image into Applications, eject it and open the installed copy. The [installation guide](INSTALLATION.md) explains the signing status of each build and how to approve Screen Recording.
 
-Click **Capture Area…** in the window or in the capture-frame menu bar icon. Drag directly on screen; Escape cancels. The window returns with the selected pixels ready for **Copy Image** or **Save PNG…**. **Capture Window…** and **Capture Screen** are alternatives. Capture is unavailable while a collection is active; stop it first. Unsaved edits prompt before replacement.
+Choose **Capture Area…** in the window or from the menu bar icon. Drag a rectangle. Escape cancels. In the default editor mode, the selected pixels open for annotation. For capture from another app, configure **Copy and return** or **Save and return** under [Set up everyday capture](#set-up-everyday-capture). Stop an active collection before taking a one-off grab.
 
 **Screenshot** is the editor. New captures and imports retain their pixel dimensions and have no added background or shadow. **Background & framing** is optional. **More Actions** contains **Copy Text…**, **Drag Image File…** and, for saved images, **Reveal Saved Image in Finder**.
 
@@ -32,7 +32,7 @@ Start minimises Framecraft. Returning to Framecraft pauses collection. Resume mi
 
 Grant Screen Recording access to the app identified by macOS. Depending on how you launched the build, this can be Framecraft, Terminal or an IDE. Open **System Settings → Privacy & Security** if access was denied, change the relevant screen-recording permission, then restart the named app if requested. Labels differ by macOS version.
 
-The capture-frame menu bar icon offers **Capture Area…**, **Capture Window…**, **Capture Screen**, **Open Framecraft**, **Keyboard Shortcuts…** and **Quit Framecraft**. Separate session commands report collection state and saved count. Capture actions also appear in the native **Capture** application menu. The controls attempt to hide during capture; verify this on the Mac you use.
+The capture-frame menu bar icon shows **Capture Area** with the everyday shortcut status. It also offers window and screen capture and separate session controls. After a direct grab, **Edit Last Capture…** opens the retained image. **Clear Last Capture** releases it. A failed output also offers **Retry Last Output**. Capture actions appear in the native **Capture** application menu.
 
 | Default binding | Action |
 | --- | --- |
@@ -149,15 +149,28 @@ Framecraft does not automatically delete originals or clean up session folders. 
 
 ## Set up everyday capture
 
-In the development beta 5, first launch opens **Make capture yours**. **Capture setup** in the header or the app's Settings menu reopens it. **More Capture → Session & app shortcuts…** remains separate.
+First launch opens **Make capture yours**. Reopen it from **Capture setup** or the app’s Settings menu. **More Capture → Session & app shortcuts…** contains the separate session controls.
 
-1. **Access:** check screen permission. Request it only when ready, approve in macOS and restart if macOS asks. Setup itself can continue without access.
-2. **Shortcut:** enable an everyday area shortcut, initially **Command + Shift + 2**, or switch it off. It works from another app while Framecraft is running. The three session shortcuts remain independent. Conflicts need a different combination.
-3. **Files:** choose a folder, a prefix such as `Project review`, and optional date folders. A preview shows the structure. Timestamps and date folders use UTC; collisions add a suffix instead of replacing files.
-4. **Finish:** choose **Open the editor** (default) or **Save automatically, then open for optional editing**. Finish validates and saves. Back retains the draft. Not now/Cancel discards changes.
+1. **Access.** Check screen permission and request it when ready. Finish setup even if you want to defer capture access. macOS controls the grant.
+2. **Shortcut.** Choose **Record shortcut**, press the keys together, and confirm your choice. Escape abandons recording. The alternative controls let you select individual keys. **Use menu bar only** keeps capture available without a global shortcut. The suggested ⌘⇧2 means Command–Shift–2. If another app already uses it, choose another chord. Ordinary typing, standard edit commands and Apple’s screenshot shortcuts are protected.
+3. **Files.** Choose a folder, filename prefix and optional UTC date folders. The preview shows where a saved grab will go. Two grabs in the same second get distinct names.
+4. **Finish.** Choose the result you want in the table below, then finish setup. The installed shortcut works while Framecraft is running. Try it from another app and check the active binding under the menu bar icon. Cancelling setup keeps your previous choices.
 
-Automatic saving writes original captured pixels only, for one-off area/window/screen captures. The image then opens for editing. Edited exports use Save PNG and a separate suggested filename; the captured original stays intact unless you explicitly choose to overwrite it in the save dialog. Cancellation before file publication writes nothing; once publication completes, the saved image is retained. Imports and session images do not trigger automatic saving. If the destination is unavailable or full, the image stays open as unsaved and the status tells you to use Save PNG. Reopen Capture setup to repair the folder.
+| After capture | What happens |
+| --- | --- |
+| Open the editor | Review the pixels and choose whether to copy or save. This is the initial default. |
+| Save automatically, then open for optional editing | Save the original PNG and open it in the editor. Existing beta 5 preferences keep this behaviour. |
+| Copy and return | Put the region on this Mac’s clipboard. Press ⌘V at the original insertion point in an app that accepts images. |
+| Save and return | Write the original PNG to your chosen folder, retain your clipboard and continue in the source app. |
 
-Preferences live at `~/Library/Application Support/Framecraft/quick-capture.json`, separately from session shortcuts. Corrupt settings produce a visible setup error. Only an explicit Finish replaces them. Setup doesn't add Framecraft to login items or grant permissions automatically.
+After Finish, **Try your shortcut** explains how to test it in another app. macOS can report an exclusive registration conflict. Some utilities use shared shortcuts that macOS accepts for both apps. If a shortcut changes the other utility’s behaviour, choose a different combination or **Use menu bar only**.
+
+Both direct modes offer an optional thumbnail. If Framecraft cannot identify the capture display, use **Edit Last Capture…** in the menu bar. This is the normal route for an area or window grab with multiple displays. Opening the retained image can prompt about an unsaved edit.
+
+Framecraft holds one direct capture in memory. **Last Capture Options → Clear Last Capture** or quitting releases it. Files and content already copied to the pasteboard have their own lifetimes. If direct output fails, the menu bar icon shows **Copy failed** or **Save failed**. Choose **Last Capture Options → Retry Last Output** or **Edit Last Capture…** to recover it. For a failed folder write, repair the destination or open the image and use **Save PNG…**.
+
+**Copy and return** requests a host-only macOS pasteboard. It excludes that write from Universal Clipboard. An explicit copy from the editor uses the ordinary system clipboard, which can participate in Apple’s Universal Clipboard if enabled. Local clipboard managers and receiving apps can retain their own copies. [Apple Universal Clipboard](https://support.apple.com/en-gb/102430)
+
+Preferences live at `~/Library/Application Support/Framecraft/quick-capture.json`. Reopen Capture setup to change them. A legacy shortcut that could intercept typing or editing needs review before it can be registered. Framecraft also works from its menu bar while keys are off.
 
 For later editing, use Open Image or drop a PNG/JPEG into the app. Previous exported annotations are flattened pixels; an editable document format is planned under [#33](https://github.com/jonathan-tipper/framecraft/issues/33).

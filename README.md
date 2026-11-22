@@ -1,21 +1,21 @@
-# Framecraft 0.3.0-beta.5 (development)
+# Framecraft 0.3.0-beta.6
 
-Capture an area of your Mac’s screen, annotate it, then copy or save the image. For meetings and presentations, collect a sequence of frames and return to it later. Images and OCR stay on your Mac.
+Press your shortcut, select a rectangle, then paste at the cursor in the app you were using. You can also save to a chosen folder, annotate a screenshot, or collect a series of frames. Framecraft processes images and recognises text locally.
 
-This branch contains the next editor iteration. Beta 5 is not published yet; the downloadable beta 2 does not include these changes. Use the source build below to test this branch.
+This is the beta 6 candidate for [background capture](https://github.com/jonathan-tipper/framecraft/issues/36) and [recorded shortcuts](https://github.com/jonathan-tipper/framecraft/issues/37). Beta 2 is the latest published installer. Distribution signing and second-Mac evidence are tracked in [the release story](https://github.com/jonathan-tipper/framecraft/issues/35).
 
 ## Install on your Mac
 
-Download the Apple silicon DMG from [the beta release](https://github.com/jonathan-tipper/framecraft/releases/tag/v0.3.0-beta.2). Open it, drag **Framecraft** onto **Applications**, then launch Framecraft from Applications. The capture-frame icon appears in your menu bar; Framecraft also has a Dock icon and normal application menus.
+Open the DMG, drag **Framecraft** onto **Applications**, eject the disk image and open the installed app. Its capture icon appears in your menu bar. Check the version under **More Capture → Screen Access… → Which copy is running?**
 
-This beta is ad-hoc signed, not Developer ID signed or notarised. macOS may block the first launch. Follow the [installation guide](docs/INSTALLATION.md) and only allow this specific build if you trust it. macOS 13 is the deployment baseline; Intel, older-system runtime and clean-Mac distribution remain unverified. See [recorded checks](docs/TEST-NOTES.md).
+Choose a build for your Mac in the [installation guide](docs/INSTALLATION.md). The [published beta 2 DMG](https://github.com/jonathan-tipper/framecraft/releases/tag/v0.3.0-beta.2) predates the steps below. A beta 6 file ending in `-development.dmg` is an ad-hoc development build. The distribution packager produces a separate Developer ID release only after Apple accepts it and Gatekeeper verifies it. See the [test record](docs/TEST-NOTES.md) for the tested hardware and builds.
 
 ## Take your first screenshot
 
-1. On first launch, use **Capture setup** to choose a global shortcut, save folder, filename prefix, optional UTC date folders and whether to edit or save automatically. **Not now** skips setup. You can reopen it at any time.
-2. Click **Capture Area…** in the window or from the Framecraft menu bar icon.
-3. Drag a rectangle around the content on screen. Press Escape to cancel.
-4. Review the result. Use **Copy Image**, **Save PNG…**, or an annotation tool. **Background & framing** adds optional presentation styling; new captures start with unchanged dimensions.
+1. Open **Capture setup**. Check Screen Recording access. In **Shortcut**, choose **Record shortcut** and press your preferred combination, or choose **Use menu bar only**. ⌘ means Command and ⇧ means Shift.
+2. Choose **Copy and return** on the last step and finish setup. Keep Framecraft running.
+3. In a rich-text TextEdit document, place the insertion point between two words. Press the configured shortcut and drag a small rectangle. **Escape** cancels.
+4. Press **⌘V**. The selected pixels should appear between the words. To annotate instead, choose **Edit Last Capture…** from Framecraft’s menu bar icon. For files, choose **Save and return** in setup and check the displayed folder and filename preview.
 
 **Capture Window…** selects a window. **Capture Screen** takes the primary display. **Open Image…** imports a PNG or JPEG. The same capture commands are in the Mac’s **Capture** application menu. The app requests the screen access macOS requires; it never grants itself permission.
 
@@ -27,7 +27,7 @@ The development editor uses a labelled tool rail and a contextual inspector. Cho
 
 **Text** now works in placement order: choose Text, click the image, type, then **Add text**. Select a label and choose **Edit text…**, or double-click it, to revise it. **Apply changes** commits one undo step; Cancel/Escape preserves the original.
 
-Automatic saving is optional. It saves the captured pixels, then opens them for editing; subsequent edits are saved separately. If automatic saving fails, the capture stays open for manual saving. Reopened PNGs can receive new marks, but their previous text is flattened. Persistent editable documents are tracked in [#33](https://github.com/jonathan-tipper/framecraft/issues/33).
+Previous editor and save-then-edit preferences carry over. **Copy and return** uses a Mac-only pasteboard. **Save and return** writes a PNG and leaves the clipboard alone. A direct grab stays available in memory for **Edit Last Capture…**. **Retry Last Output** recovers a failed copy or save. **Clear Last Capture** releases the retained image. Reopened PNGs contain flattened text and marks. Persistent editable documents are tracked in [#33](https://github.com/jonathan-tipper/framecraft/issues/33).
 
 **Cancel tool** returns to Select and preserves completed marks. Use Undo after committing a mark. **Close screenshot** leaves Framecraft running; a fresh capture or unsaved edit offers Save, Discard changes and Cancel. Copying to the clipboard does not count as saving a file. Native checks and outstanding limits are recorded in [TEST-NOTES](docs/TEST-NOTES.md).
 

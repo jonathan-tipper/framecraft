@@ -1,3 +1,26 @@
+# Capture-to-paste candidate 0.3.0-beta.6
+
+22 November 2026. Checks ran on a MacBookPro18,2 with Apple M1 Max, macOS 26.6.2 (25G83) and Rust 1.95.0. Runtime commit `5f1448a` includes #30, #31 and #34 through integration commit `393686c`. The bundle identifies itself as `dev.framecraft.app`, build `3.0.6`, architecture `arm64`, macOS 13 minimum. The deployment target by itself does not verify macOS 13 runtime compatibility.
+
+| Check | Observed result |
+| --- | --- |
+| Locked default-feature suite | 203 passed across library, app and integration tests. 5 opt-in tests were skipped in this run. |
+| Locked core suite | 138 passed, 4 opt-in tests skipped. The suites overlap. |
+| Build and analysis | Formatting, strict Clippy with and without default features, release build, plist lint and Git diff checks passed. The bundled executable exported a synthetic 1248 × 828 PNG. |
+| Local paste at a caret | The explicitly run private-pasteboard fixture decoded every RGBA byte of a 7 × 3 image. A separate offscreen AppKit rich-text process inserted it between two words and checked the attachment’s dimensions and pixels. Cancellation after encoding and invalid input preserved the previous item. |
+| Mac shortcuts | Two processes contended for Control–Option–F18. The second exclusive registration failed and acquired the chord after release. macOS also allowed an exclusive claim over a shared registration. The setup explains this limitation. A Carbon event addressed to the fixture's own application target produced exactly one Capture Area command. |
+| Native menus and state | The Mac controls fixture exercised Edit Last Capture, retry, clear, app settings, guarded quit, session state updates and releasing registrations. Tests covered a failed binding/preference transaction, recording loss of focus, repeats, Escape, physical key position versus the displayed legend, and the menu-only choice. |
+| Handoff and recovery | Tests covered retained dirty documents, exact PNG output, repeated selections, failed copy/save, retry, cancellation before publication, and clearing the last capture. Display-ID tests suppress an ambiguous or changed thumbnail location. |
+| Native thumbnail and focus | The inactive fixture showed the production AppKit panel on a synthetic target. The panel stayed non-key and non-main, the foreground process and offscreen caret stayed the same, and Edit/Clear dismissed it. Hiding and restoring the synthetic editor preserved its previous alpha and mouse handling. CoreGraphics reported the physical display was asleep, so ordinary placement correctly suppressed the thumbnail. |
+| Development DMG | The read-only mounted image passed its checksum. The enclosed app passed strict signature, layout and executable equality checks. Installation, replacement, refusal and injected rollback passed in temporary destinations. The existing application in Applications was left in place. |
+| Existing native OCR regressions | Both opt-in Apple Vision tests passed on synthetic pixels, including the dark-interface fixture and redacted text. |
+
+The [native thumbnail image](evidence/beta6-native/thumbnail.png) contains only the AppKit panel’s own view with a synthetic capture. It shows the receipt and both actions at 2×. The focus test ran from an inactive process. The image records appearance separately from the physical shortcut and screen-selection test below.
+
+The local development DMG has SHA-256 `ad6d5a94055572f802be1afefdb63c9634865ea59b30f887ee0e44c1bceb79cc`. Independently built CI images carry their own checksum. The local signature reports `adhoc` and no team identifier. The Mac keychain returned zero valid code-signing identities. GitHub had no release environment, repository signing secrets or self-hosted runner configured. The distribution packager rejected missing, ad-hoc and unavailable identities. Apple notarisation and a Developer ID installation are pending in [#35](https://github.com/jonathan-tipper/framecraft/issues/35).
+
+The private pasteboard, addressed Carbon event and native fixtures establish separate parts of the flow. The physical shortcut → system selector → immediate ⌘V sequence in a foreground document, actual mouse-release latency, second-Mac install/upgrade and consent, multiple physical displays, a second installed keyboard layout and VoiceOver remain open. Use the [MacBook test procedure](TESTING.md#beta-6-shortcut-and-paste-on-another-mac) with the exact distributed DMG.
+
 # Everyday capture candidate: 0.3.0-beta.5
 
 8 November 2026. Implements the text correction in #14, setup in #32 and visual consistency follow-ups in #27/#28. This is a local test candidate, not a published or accepted release.

@@ -159,6 +159,33 @@ Use an installed copy and record macOS version, build and executable path. Use s
 Record first-grant, denied, revoked, restart-required and already-granted cases separately. Managed-device restrictions and native system prompts need an actual Mac test, not mocks.
 
 
+## Beta 6 shortcut and paste on another Mac
+
+The following checks run in a logged-in Mac session. The first uses a uniquely named pasteboard and a separate offscreen rich-text process. The other two exercise native registration and menu dispatch with synthetic inputs. The conflict probe briefly reserves Control–Option–F18 and releases it on exit.
+
+```sh
+cargo test --locked --lib private_pasteboard_round_trips_rgba_and_cancel_preserves_previous_item -- --ignored --nocapture
+cargo run --locked --example shortcut-conflict-smoke
+cargo run --locked --example native-controls-smoke
+cargo run --locked --example native-handoff-smoke
+```
+
+To export only the synthetic thumbnail’s own AppKit view, pass `-- --export-panel /absolute/new-file.png` to the last example. A sleeping display can make real capture targeting unavailable while still allowing this panel-only check against a fixture-selected destination.
+
+Use a small synthetic test image with a recognisable border and two local TextEdit documents. Choose **Format → Make Rich Text** in the receiving document if it is currently plain text. Record the DMG checksum, Mac chip, macOS version, display scale, running-copy path and actual result of each check.
+
+| Check | Action and expected result |
+| --- | --- |
+| Install and permission | Download the candidate, drag it into Applications, eject the DMG and open Framecraft. Confirm the version in Screen Access. Grant Screen Recording if prompted, reopen if requested and explicitly retry. Record any Gatekeeper or privacy prompt separately. |
+| Record and relaunch | Record an available chord, choose **Copy and return**, finish setup, quit and reopen. The menu bar should show the same active combination. Try a standard editing key and an intentionally occupied chord. A failed replacement should preserve the previous working key. |
+| Copy at the caret | Type two words in the rich-text document. Leave the caret between them. From there invoke the shortcut, select the fixture and immediately press ⌘V. Check the region, dimensions, position and which app has keyboard focus. Record time from releasing the mouse to usable paste. |
+| Cancel and repeat | Start a second selection and press Escape. Type another character. Paste again to confirm the previous clipboard item survived. Take two differently marked grabs in succession and check that the most recent completed one pastes. |
+| Dirty editor and thumbnail | Leave an unsaved annotation open in Framecraft. Capture directly from TextEdit. Check the earlier edit survives and that **Edit Last Capture…** prompts before replacing it. Repeat with the thumbnail disabled, and with it visible before the next grab. |
+| Save and recover | Put a recognisable text string on the clipboard. Choose **Save and return**, capture, and check the file and the unchanged clipboard. Move the disposable output folder, capture again, then recover the image using Edit Last Capture or repair the folder and retry. |
+| Layout and upgrade | Repeat on another layout, on each available display and in a full-screen Space. Check keyboard-only and VoiceOver use. For an upgrade, record both versions, signing teams and whether Screen Recording required fresh consent. |
+
+Copy only synthetic material. Report failures or skipped rows with the actual configuration in [#35](https://github.com/jonathan-tipper/framecraft/issues/35), [#36](https://github.com/jonathan-tipper/framecraft/issues/36) or [#37](https://github.com/jonathan-tipper/framecraft/issues/37).
+
 ## Everyday capture and text correction (beta 5 candidate)
 
 Use a disposable destination and synthetic image. Record app path, signing identity, OS version and whether each check was automated or observed natively.

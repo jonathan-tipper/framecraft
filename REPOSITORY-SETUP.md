@@ -1,14 +1,14 @@
 # Framecraft repository and source archives
 
-The maintained repository is [jonathan-tipper/framecraft](https://github.com/jonathan-tipper/framecraft). Version 0.3.0-beta.1 adds persistent session review and local handoff. Read the [README](README.md), [developer guide](docs/DEVELOPER-GUIDE.md) and [recorded checks](docs/TEST-NOTES.md) before testing.
+The maintained repository is [jonathan-tipper/framecraft](https://github.com/jonathan-tipper/framecraft). The beta 6 candidate includes capture-to-paste and recorded shortcuts. The [README](README.md), [developer guide](docs/DEVELOPER-GUIDE.md) and [recorded checks](docs/TEST-NOTES.md) identify the build and its distribution status.
 
 ## Existing checkout
 
-Fetch the beta tag without replacing local changes:
+For the beta 6 review build, fetch and select the candidate commit from the pull request:
 
 ```sh
-git fetch origin --tags
-git switch --detach v0.3.0-beta.1
+git fetch origin
+git switch --detach origin/feat/capture-to-paste-beta-36
 cargo test --all-targets --locked
 ./scripts/bundle-macos.sh
 open dist/Framecraft.app
@@ -24,6 +24,6 @@ For a separate fork with new history, initialise only inside the extracted archi
 
 ## Test distribution
 
-The supplied binary is Apple silicon, built with a macOS 13 minimum deployment target and tested on macOS 26.6.2. Intel, other supported OS versions and a clean Mac remain unvalidated. The app is ad-hoc signed, not Developer ID signed or notarised. Use the source build if local security policy prevents opening the downloaded test bundle; do not disable system-wide protections.
+The Apple silicon development build has a macOS 13 minimum deployment target. The download and checksum of each published release are on [GitHub Releases](https://github.com/jonathan-tipper/framecraft/releases). Look for the architecture and the signing status of the exact DMG you are testing. The instructions for a Developer ID release and an ad-hoc development package are in the [installation guide](docs/INSTALLATION.md).
 
 The original 0.2 archive instructions are retained in Git history. Their Linux-only validation statements are historical, not the evidence for 0.3.

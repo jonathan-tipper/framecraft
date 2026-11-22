@@ -1,21 +1,15 @@
 # Install Framecraft on a Mac
 
-Framecraft 0.3.0-beta.2 is an Apple silicon test build. macOS 13 is the deployment baseline; the supported-version and hardware matrix is not fully tested. The app is ad-hoc signed, **not Developer ID signed or notarised**.
+Beta 6 adds capture-to-paste and shortcut recording. The current GitHub download is the earlier Apple silicon beta 2. A beta 6 file ending in `-development.dmg` is an internal, ad-hoc-signed test build. A Developer ID beta is published only after Apple notarisation, ticket stapling and Gatekeeper assessment. Check the actual build status in [release #35](https://github.com/jonathan-tipper/framecraft/issues/35).
 
-## Download and install
+## Install or update on a MacBook
 
-1. Download the `.dmg` and checksums from the [0.3.0-beta.2 release](https://github.com/jonathan-tipper/framecraft/releases/tag/v0.3.0-beta.2). Compare `shasum -a 256` for your download with the published digest.
-2. Open the disk image. Quit any running copy of Framecraft, then drag **Framecraft.app** onto **Applications** in the disk image. Confirm replacement if updating an older version.
-3. Eject the disk image. Open **Applications → Framecraft**. Its icon appears in the Dock while running, and its capture icon appears in the menu bar at the top of the screen.
-4. Choose **Capture Area** in the app or its menu bar menu, then drag across the area you want. Press Escape to cancel. No capture session or shortcut configuration is needed for a single screenshot.
+1. Choose the DMG for your Mac’s chip under Apple menu → **About This Mac**. `arm64` means Apple silicon. Read the release notes and compare the download with the accompanying SHA-256 file. The current Mac build targets macOS 13 or later. Tested configurations are listed in the [test notes](TEST-NOTES.md).
+2. Quit Framecraft. Open the DMG, drag **Framecraft.app** onto **Applications**, and confirm replacement if updating. Eject the DMG and launch the copy in Applications. Saved sessions and settings live outside the app bundle.
+3. Open **More Capture → Screen Access… → Which copy is running?** Confirm the release version and the path inside Applications. Opening an older copy can give a different permission result.
+4. In **Capture setup**, check screen access, record an available shortcut and choose **Copy and return**. Use the [second-Mac test](TESTING.md#beta-6-shortcut-and-paste-on-another-mac) for a first capture.
 
-The app is installed separately from your saved captures and settings. Updating the app does not delete session folders. Keep those folders together with their manifests when making backups.
-
-## If macOS blocks the beta
-
-After trying to open Framecraft, open **System Settings → Privacy & Security**. If you trust the source and checksum, select **Open Anyway** for Framecraft and confirm. This approves that particular app; it does not require turning off Gatekeeper. Managed Macs may not offer this override. Follow your organisation's policy if that applies.
-
-Do not override warnings about known malware or damaged software. Check the download and source instead. Apple's [open apps safely guidance](https://support.apple.com/en-gb/102445) explains the distinction and the supported approval flow. General installation steps are in Apple's [Mac installation guide](https://support.apple.com/en-gb/guide/mac-help/mh35835/mac).
+Developer ID signing, Apple notarisation and Screen Recording consent are separate checks. A normally downloaded Developer ID build should launch with standard Gatekeeper settings. If that fails, record the exact alert, version and source. The published beta 2 and development DMGs have a different trust status. On managed Macs, use an approved build or ask the administrator. [Beta 2 installation guide](https://github.com/jonathan-tipper/framecraft/blob/v0.3.0-beta.2/docs/INSTALLATION.md) · [Apple’s guidance on opening Mac apps](https://support.apple.com/en-gb/102445)
 
 ## Allow capture
 
@@ -25,7 +19,7 @@ In beta 4 development builds, use **More Capture → Screen Access… → Reques
 
 If Framecraft is absent from the privacy list, use the **+** button and select `/Applications/Framecraft.app`. Quit other copies, including the one on a mounted DMG, and launch the installed app. If macOS requires a restart after approval, quit and reopen Framecraft before retrying. If the switch is unavailable on a managed Mac, ask its administrator about the screen-recording policy.
 
-These beta builds are ad-hoc signed. An updated binary or a different launch location can require approval again; a stable Developer ID distribution identity remains outstanding. Do not disable macOS protections or reset unrelated apps' permissions to work around this.
+An ad-hoc rebuild can acquire a different permission identity. A signed upgrade should be tested with the previously installed copy quit. Check the path and version if the switch appears enabled but the running app reports denied access.
 
 The command error `could not create image from rect` alone does not prove denial. In the Screen Access panel, check this running copy's status. If granted, try a non-empty area on an available display; report the capture mode, macOS version and running-copy path if it still fails.
 

@@ -1,6 +1,6 @@
 # Everyday capture and editing
 
-Status: implementation candidate, 8 November 2026. Owns [#32](https://github.com/jonathan-tipper/framecraft/issues/32); extends #14 text correction and #27/#28 visual consistency. User feedback remains acceptance evidence of a problem, not proof that this candidate solves it.
+Beta 6 candidate, 22 November 2026. Extends the setup and text work in #32 and #14 with the direct-output contract in [#36](https://github.com/jonathan-tipper/framecraft/issues/36) and shortcut recording in [#37](https://github.com/jonathan-tipper/framecraft/issues/37). [Release evidence](../TEST-NOTES.md) distinguishes implemented behaviour from native acceptance.
 
 ## User and outcome
 A Mac user should set up capture once, then use a shortcut from another app, select an area, and edit or save predictably. Captured and imported images share the editor. Source files remain intact.
@@ -23,20 +23,22 @@ Setup is a 4-step native flow with a persistent step indicator:
 | Step | Content | Validation and exit |
 | --- | --- | --- |
 | Screen access | Purpose, current permission, Request access, system settings, Check again | Permission is requested only explicitly. Setup can continue without granting; capture remains gated. |
-| Shortcut | Enable everyday shortcut and readable modifier/key controls | Valid key, app-reserved and session conflicts checked before finishing; native registration failure retains draft. |
-| Save location | Folder chooser, prefix, optional date grouping, example path | Absolute destination, bounded safe prefix. Finish probes destination only when automatic saving is chosen. |
-| Finish | Open editor (default) or Save automatically; summary | Finish persists and registers; Back retains draft; Not now/Cancel discards draft. |
+| Shortcut | Record shortcut, Choose keys individually, or Use menu bar only | Capture one focused chord. Escape abandons it. A conflicting or unsafe shortcut can be replaced before Finish. |
+| Save location | Folder, prefix, optional date grouping, example path | Probe a write destination for either saving mode. |
+| Finish | Open editor, save then edit, Copy and return, or Save and return | Persist the choices and register the confirmed binding. Back retains the draft. Cancelling discards it. |
 
 First normal launch shows setup unless completed. `--demo` skips automatic setup. Setup can always be reopened from the header and native Settings. The session shortcut editor remains separately labelled. Captures, imports and editor mutations are blocked underneath setup; closing it retains the prior document. Skipping does not create preferences or register a global key.
 
 ## Data and lifecycle contract
-Store `quick-capture.json` separately from existing session shortcuts. Fields: setup completion, shortcut enabled/key, destination, filename prefix, date grouping and after-capture choice. Validate and atomically replace the file. Surface malformed settings rather than silently replacing them; an explicit Finish is required to adopt a replacement.
+Store the everyday binding and output preferences separately from session shortcuts. Preserve existing Edit and Save variants when reading beta 5 settings. If an old binding would consume ordinary typing or a standard edit command, disable it for review while keeping the other preferences. Display native registration failure separately from “off”. Register the replacement while retaining the previous key. Commit the preference write before releasing the previous registration. Escape, a busy chord or a failed write preserves the working binding.
 
-Register the everyday area shortcut only after completed setup. Keep its registration independent of session hotkeys and restore the prior binding on failed replacement. Guard every native command through the existing app capture state. Session start/stop must not unregister everyday capture. Reject saved session keys that conflict with the everyday key.
+A direct grab never replaces the current editor document. Capture completion publishes one host-only pasteboard image or a collision-safe PNG, then updates the single in-memory last capture. A failure preserves the captured image for retry or editing. A cancelled selection before publication leaves prior output and the editor untouched. Once publication finishes, the output belongs to the user. The two editor-opening modes retain their original document and save guards. Session, modal and in-flight capture guards apply to every entry point.
 
-Filename contract: safe prefix + UTC `YYYYMMDD-HHMMSS` timestamp + collision suffix + `.png`; optional UTC `YYYY-MM-DD` directory. Explain UTC beside the preview. Atomic no-clobber publication never replaces an existing screenshot. Save original capture pixels with no style or annotation applied. Cancellation before atomic file publication produces no output; after publication, the completed save is retained and reported. Imported and session images never enter this auto-save route.
+The native thumbnail is optional, accepts an explicit Edit action and stays out of the next selection. The menu always provides a keyboard-accessible alternative when a retained image exists. Clear or quit releases the retained in-memory item. An explicit editor copy uses the ordinary pasteboard. Direct copy requests the host-only pasteboard option.
 
-With Open editor, the capture is unsaved until the user exports. With Save automatically, save on the worker and then open the captured image for optional annotation. Success reports the real path and marks the source revision saved. Failure still opens the captured image as unsaved and gives a manual Save PNG recovery. Later edits use explicit Save PNG and do not overwrite the auto-saved original. A fresh capture still obeys unsaved-image and active-session guards.
+Finishing setup validates and atomically replaces `quick-capture.json`. Malformed preferences require an explicit replacement. Session start and stop leave the one-off binding alone, and the two sets of keys must not collide.
+
+Original PNGs use the configured safe prefix, UTC `YYYYMMDD-HHMMSS`, a collision suffix when needed, and optional `YYYY-MM-DD` folders. Saving publishes without overwriting an older file. Importing or reopening an image never triggers a one-off automatic save. In save-then-edit mode, failed saving opens the unsaved image for a manual export.
 
 ## Editing afterwards
 Open Image, drag-and-drop and session reopening support later annotation of PNG/JPEG pixels. Existing text objects are editable while their document remains open. PNG exports flatten annotations; reopening one cannot recover its text objects or undo history. A durable editable document format and recent single captures are follow-on backlog work, not implied by this slice.

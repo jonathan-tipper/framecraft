@@ -66,7 +66,7 @@ A pack freezes selected snapshots, order, explicit captions and variant labels b
 
 ## Release boundaries
 
-The target is a local, ad-hoc signed macOS test bundle. Platform deployment flags are not native evidence. Permission behaviour, multiple display arrangements, menu hiding, minimised shortcuts, external drag recipients, VoiceOver and another-Mac offline packs remain explicit [test gates](TESTING.md). No performance or user-benefit claim follows merely from unit tests or a synthetic OCR pass.
+Development packages carry an ad-hoc signature. The distribution path builds in fresh staging, signs with Developer ID and hardened runtime, notarises and staples the app and DMG, and verifies the mounted app before publishing the artefacts. It records the commit, signing team, notarisation receipts and final checksum. Permission behaviour and real receiving apps need independent [Mac test evidence](TESTING.md).
 
 
 ## Beta 2 Mac entry points
@@ -76,10 +76,12 @@ The first window is single capture, with Sessions as a secondary view. Native ap
 The icon and DMG/install scripts are distribution assets, independent of image storage. The installed bundle has the same `dev.framecraft.app` identifier and macOS 13 baseline. Ad-hoc signing is not notarisation.
 
 
-## Everyday capture (beta 5 candidate)
+## Everyday capture
 
-`setup_ui.rs` renders a draft; `app.rs` validates, probes the destination when direct saving is selected, registers the independent area shortcut and atomically persists `quick-capture.json`. A failed persistence attempt restores the previous key or reports recovery failure. Session keys use their existing file and remain independent; conflicts are validated at both the preference and native boundaries.
+`setup_ui.rs` owns the uncommitted four-step draft. `quick_capture.rs` validates shortcuts, preserves earlier output choices and writes preferences atomically. The everyday shortcut registration is independent of session bindings. The Mac adapter keeps the old working binding during a replacement until the new key and preferences are committed.
 
-The capture worker retains pixel ownership through optional automatic saving. `quick_capture.rs` writes a private temporary PNG, checks cancellation and atomically publishes without replacement. Cancellation before publication returns no image/file; publication is the commit boundary. Save failure returns the captured pixels to the editor as unsaved. Successful automatic saving marks only the just-loaded source revision saved; later annotation edits remain unsaved. The shared renderer continues to govern edited exports.
+`app/handoff.rs` resolves the four one-off output modes. The worker checks cancellation before publishing a host-only PNG to the Mac pasteboard or a no-clobber file. The app holds at most one direct result, including pixels needed to retry a failed output. Opening that result uses the usual dirty-document guard. The two editor-opening modes retain their original behaviour.
+
+`native_handoff.rs` owns the Mac pasteboard, editor-window capture guard and optional non-activating preview panel. A capture temporarily hides editor pixels and mouse interception without moving the window to the front. Completion of a direct grab leaves keyboard focus in the source app. Explicitly opening the editor requests focus.
 
 Text editing uses a draft transaction isolated from underlying commands. Add/Apply creates one history entry; Cancel never adds an empty annotation. The current PNG format remains flattened. See the [everyday capture contract](specs/everyday-capture.md).
