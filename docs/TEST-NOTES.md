@@ -1,4 +1,4 @@
-# Capture-to-paste candidate 0.3.0-beta.6
+# Capture-to-paste prerelease 0.3.0-beta.6
 
 22 November 2026. Checks ran on a MacBookPro18,2 with Apple M1 Max, macOS 26.6.2 (25G83) and Rust 1.95.0. Runtime commit `5f1448a` includes #30, #31 and #34 through integration commit `393686c`. The bundle identifies itself as `dev.framecraft.app`, build `3.0.6`, architecture `arm64`, macOS 13 minimum. The deployment target by itself does not verify macOS 13 runtime compatibility.
 
@@ -19,9 +19,19 @@ The [native thumbnail image](evidence/beta6-native/thumbnail.png) contains only 
 
 The local development DMG has SHA-256 `ad6d5a94055572f802be1afefdb63c9634865ea59b30f887ee0e44c1bceb79cc`. Independently built CI images carry their own checksum. The local signature reports `adhoc` and no team identifier. The Mac keychain returned zero valid code-signing identities. GitHub had no release environment, repository signing secrets or self-hosted runner configured. The distribution packager rejected missing, ad-hoc and unavailable identities. Apple notarisation and a Developer ID installation are pending in [#35](https://github.com/jonathan-tipper/framecraft/issues/35).
 
-The DMG and its checksum were downloaded again from the private GitHub draft. The downloaded bytes matched the digest above and passed `hdiutil verify`. The macOS 15 check on commit `f1d1182` recorded zero test steps because the repository's Actions budget blocked the job before a runner started. [Development draft](https://github.com/jonathan-tipper/framecraft/releases/tag/untagged-1718d416b78610f78c6f) · [Hosted check](https://github.com/jonathan-tipper/framecraft/actions/runs/44971550696/job/137052236852)
+The DMG and checksum downloaded from GitHub matched the digest above and passed `hdiutil verify`. Before the repository went public, the macOS 15 check on `f1d1182` ran zero steps because an Actions budget blocked the job. [Published artefacts](https://github.com/jonathan-tipper/framecraft/releases/tag/v0.3.0-beta.6) · [Original hosted check](https://github.com/jonathan-tipper/framecraft/actions/runs/44971550696/job/137052236852)
 
-The private pasteboard, addressed Carbon event and native fixtures establish separate parts of the flow. The physical shortcut → system selector → immediate ⌘V sequence in a foreground document, actual mouse-release latency, second-Mac install/upgrade and consent, multiple physical displays, a second installed keyboard layout and VoiceOver remain open. Use the [MacBook test procedure](TESTING.md#beta-6-shortcut-and-paste-on-another-mac) with the exact distributed DMG.
+Mouse-release latency, second-Mac install and consent, multiple physical displays, a second installed keyboard layout and VoiceOver remain open. Use the [MacBook test procedure](TESTING.md#beta-6-shortcut-and-paste-on-another-mac) with the exact distributed DMG.
+
+### Installed upgrade on 23 November 2026
+
+On macOS 26.6.2, the development DMG downloaded from the private draft matched the recorded SHA-256 and passed `hdiutil verify`. The upgrade replaced beta 4 (`3.0.4`) with beta 6 (`3.0.6`) in `/Applications/Framecraft.app`. The installed executable matched the one on the mounted DMG. The strict bundle signature check passed, the existing capture shortcut appeared as active, and the installed binary exported a synthetic 1248 × 828 PNG. The standard suite passed again with 203 tests. The command-line download had no quarantine attribute. A standalone Gatekeeper assessment rejected the ad-hoc bundle.
+
+Immediately after the upgrade, System Settings showed Framecraft enabled while **Screen Access** reported denied. The macOS privacy log attributed the request to the installed app and showed that its new code directory hash failed the existing beta 4 Screen Recording requirement. Clicking **Capture Area…** with access unset kept the app open and showed Screen Access. The scoped `tccutil reset ScreenCapture dev.framecraft.app` removed the stale entry. After the local user added the copy in Applications and Framecraft quit and reopened, Screen Access reported granted. **Capture Area…** then entered native selection and returned to ready after cancellation.
+
+In the installed app, Capture Setup recorded a spare chord and rejected Command+C. Cancelling the draft kept the active Command+Shift+2 binding, and the preference file matched the pre-upgrade copy byte for byte. The editor loaded the synthetic PNG, focused the text field after placing a label, applied a text edit and saved a 1248 × 828 PNG. A pixel comparison confirmed the edit affected the label rectangle. **Copy image** inserted an attachment between the two original words in a TextEdit test document after TextEdit converted it to RTFD.
+
+The maintainer then reported a successful physical **⌘⇧2 → select → paste** with **Copy and return** on the installed beta. Direct paste was exercised manually. No selection-to-paste timing was recorded.
 
 # Everyday capture candidate: 0.3.0-beta.5
 

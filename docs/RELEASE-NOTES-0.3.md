@@ -1,4 +1,6 @@
-# 0.3.0-beta.6 capture and shortcut candidate
+# 0.3.0-beta.6 capture and shortcut prerelease
+
+The Apple silicon DMG uses an ad-hoc signature. If macOS blocks the first launch, use **Open Anyway** for Framecraft after attempting to open the installed copy. [Download and release instructions](https://github.com/jonathan-tipper/framecraft/releases/tag/v0.3.0-beta.6) · [Permission recovery](INSTALLATION.md#allow-capture)
 
 - **Copy and return** places the selected pixels on this Mac’s clipboard for pasting in the source app. **Save and return** writes a named PNG and retains the clipboard. Both offer **Edit Last Capture…** from the menu bar. Existing editor-opening preferences carry over.
 - **Record shortcut** accepts an actual key combination. A labelled picker and **Use menu bar only** provide alternatives. Settings and the status menu show the binding that registered. A conflict or failed save retains the previously working key.

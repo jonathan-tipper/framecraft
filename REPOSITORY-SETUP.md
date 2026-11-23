@@ -1,14 +1,14 @@
 # Framecraft repository and source archives
 
-The maintained repository is [jonathan-tipper/framecraft](https://github.com/jonathan-tipper/framecraft). The beta 6 candidate includes capture-to-paste and recorded shortcuts. The [README](README.md), [developer guide](docs/DEVELOPER-GUIDE.md) and [recorded checks](docs/TEST-NOTES.md) identify the build and its distribution status.
+Framecraft is maintained at [jonathan-tipper/framecraft](https://github.com/jonathan-tipper/framecraft). Beta 6 adds capture-to-paste and recorded shortcuts. The [README](README.md), [developer guide](docs/DEVELOPER-GUIDE.md) and [test results](docs/TEST-NOTES.md) document the release.
 
 ## Existing checkout
 
-For the beta 6 review build, fetch and select the candidate commit from the pull request:
+To build beta 6 from source, fetch and select the release tag.
 
 ```sh
-git fetch origin
-git switch --detach origin/feat/capture-to-paste-beta-36
+git fetch origin tag v0.3.0-beta.6
+git switch --detach v0.3.0-beta.6
 cargo test --all-targets --locked
 ./scripts/bundle-macos.sh
 open dist/Framecraft.app

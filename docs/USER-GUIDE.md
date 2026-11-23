@@ -1,6 +1,6 @@
 # Framecraft 0.3 user guide
 
-This guide follows the beta 6 candidate. For a test report, include the version and running-copy path shown in **More Capture → Screen Access… → Which copy is running?** Check which builds and flows have been exercised in the [test notes](TEST-NOTES.md).
+This guide covers beta 6. For a test report, include the version and running-copy path shown in **More Capture → Screen Access… → Which copy is running?**. [Installation guide](INSTALLATION.md) · [Test results](TEST-NOTES.md)
 
 ## Install and take a screenshot
 

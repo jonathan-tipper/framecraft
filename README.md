@@ -2,13 +2,11 @@
 
 Press your shortcut, select a rectangle, then paste at the cursor in the app you were using. You can also save to a chosen folder, annotate a screenshot, or collect a series of frames. Framecraft processes images and recognises text locally.
 
-This is the beta 6 candidate for [background capture](https://github.com/jonathan-tipper/framecraft/issues/36) and [recorded shortcuts](https://github.com/jonathan-tipper/framecraft/issues/37). Beta 2 is the latest published installer. Distribution signing and second-Mac evidence are tracked in [the release story](https://github.com/jonathan-tipper/framecraft/issues/35).
-
 ## Install on your Mac
 
-Open the DMG, drag **Framecraft** onto **Applications**, eject the disk image and open the installed app. Its capture icon appears in your menu bar. Check the version under **More Capture → Screen Access… → Which copy is running?**
+**Download beta 6 for Apple silicon.** Open the DMG, drag **Framecraft** into **Applications**, eject the disk image and open Framecraft from Applications. Its capture icon appears in your menu bar. [Download the DMG and checksum](https://github.com/jonathan-tipper/framecraft/releases/tag/v0.3.0-beta.6)
 
-Choose a build for your Mac in the [installation guide](docs/INSTALLATION.md). The [published beta 2 DMG](https://github.com/jonathan-tipper/framecraft/releases/tag/v0.3.0-beta.2) predates the steps below. A beta 6 file ending in `-development.dmg` is an ad-hoc development build. The distribution packager produces a separate Developer ID release only after Apple accepts it and Gatekeeper verifies it. See the [test record](docs/TEST-NOTES.md) for the tested hardware and builds.
+Beta 6 uses an ad-hoc signature and has no Apple notarisation. If macOS blocks the first launch, approve Framecraft under **System Settings → Privacy & Security → Open Anyway**. Screen Recording access is a separate step. The guide covers both and the permission repair for upgrades. [Mac installation guide](docs/INSTALLATION.md) · [Test results](docs/TEST-NOTES.md)
 
 ## Take your first screenshot
 
