@@ -110,7 +110,7 @@ fn paint(painter: &egui::Painter, rect: Rect, icon: Icon, colour: Color32) {
             rect.top() + y * rect.height() / 24.0,
         )
     };
-    let stroke = Stroke::new(1.5, colour);
+    let stroke = Stroke::new(1.5_f32, colour);
     let line = |a: (f32, f32), b: (f32, f32)| {
         painter.line_segment([point(a.0, a.1), point(b.0, b.1)], stroke);
     };
