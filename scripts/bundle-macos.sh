@@ -9,12 +9,15 @@ fi
 project_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$project_dir"
 export MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-13.0}"
-
-if [[ -f Cargo.lock ]]; then
-  cargo build --release --locked
-else
-  cargo build --release
+bundle_parent="$project_dir/dist"
+if [[ $# -eq 2 && "$1" == --output-dir && "$2" == /* ]]; then
+  bundle_parent="$2"
+elif [[ $# -ne 0 ]]; then
+  printf '%s\n' 'Usage: bundle-macos.sh [--output-dir /absolute/staging/directory]' >&2
+  exit 2
 fi
+
+cargo build --release --locked
 
 # Respect an explicitly configured Cargo target directory.
 target_dir="${CARGO_TARGET_DIR:-$project_dir/target}"
@@ -28,7 +31,7 @@ if [[ ! -f "$binary_path" ]]; then
   exit 1
 fi
 
-bundle_dir="$project_dir/dist/Framecraft.app"
+bundle_dir="$bundle_parent/Framecraft.app"
 mkdir -p "$bundle_dir/Contents/MacOS" "$bundle_dir/Contents/Resources"
 cp "$binary_path" "$bundle_dir/Contents/MacOS/framecraft"
 cp "$project_dir/packaging/Info.plist" "$bundle_dir/Contents/Info.plist"
@@ -40,12 +43,8 @@ cp "$project_dir/LICENSE" "$bundle_dir/Contents/Resources/LICENSE"
 awk '/^\[package\]/{package=1;next} /^\[/{package=0} package && /^version *=/{gsub(/"/, "", $3); print $3; exit}' Cargo.toml > "$bundle_dir/Contents/Resources/VERSION"
 chmod +x "$bundle_dir/Contents/MacOS/framecraft"
 
-if command -v codesign >/dev/null 2>&1; then
-  codesign --force --deep --sign - "$bundle_dir"
-  printf '%s\n' 'Applied ad-hoc signing for local use. This is not notarisation.'
-else
-  printf '%s\n' 'codesign is unavailable; the bundle remains unsigned.' >&2
-fi
+/usr/bin/codesign --force --sign - "$bundle_dir"
+printf '%s\n' 'Applied a development signature to the local bundle.'
 
 printf 'Created %s\n' "$bundle_dir"
 

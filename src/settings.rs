@@ -157,13 +157,29 @@ impl ShortcutParts {
         names.push(&self.key);
         names.join(" + ")
     }
+
+    pub fn symbols(&self) -> String {
+        let mut symbols = String::new();
+        for (enabled, symbol) in [
+            (self.control, '⌃'),
+            (self.option, '⌥'),
+            (self.command, '⌘'),
+            (self.shift, '⇧'),
+        ] {
+            if enabled {
+                symbols.push(symbol);
+            }
+        }
+        symbols.push_str(&self.key);
+        symbols
+    }
 }
 
 pub fn display_shortcut(value: &str) -> Result<String, String> {
     Ok(ShortcutParts::parse(value)?.display())
 }
 
-fn canonical_key(value: &str) -> Result<String, String> {
+pub(crate) fn canonical_key(value: &str) -> Result<String, String> {
     let mut modifiers = [false; 4];
     let tokens: Vec<_> = value.split('+').map(str::trim).collect();
     if tokens.len() < 2 {

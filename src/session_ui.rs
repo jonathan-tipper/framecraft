@@ -683,6 +683,11 @@ impl SessionView {
     ) {
         use framecraft::desktop::DesktopAction;
         match action {
+            DesktopAction::CancelCapture
+            | DesktopAction::CloseScreenshot
+            | DesktopAction::EditLastCapture
+            | DesktopAction::RetryLastOutput
+            | DesktopAction::ClearLastCapture => {}
             DesktopAction::Capture => {
                 if let Some(r) = &self.runner {
                     if let Err(error) = r.capture_now() {

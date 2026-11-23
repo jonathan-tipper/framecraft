@@ -82,9 +82,52 @@ pub fn permission_status() -> PermissionStatus {
 pub fn permission_guidance(status: PermissionStatus) -> &'static str {
     match status {
         PermissionStatus::Granted => "Screen recording permission is granted. If capture fails, select an available source and retry.",
-        PermissionStatus::NotGranted => "Screen recording access is not granted. Open System Settings > Privacy & Security > Screen & System Audio Recording (Screen Recording on older macOS), allow Framecraft, then quit and reopen it. A development build may appear as Terminal or your IDE. Retry explicitly after fixing access.",
+        PermissionStatus::NotGranted => "Screen recording access is not granted to this running copy. Open Screen Access in Framecraft and choose Request Access. Then enable Framecraft in System Settings > Privacy & Security > Screen & System Audio Recording (Screen Recording on older macOS). If it is missing, use the + button to add /Applications/Framecraft.app. Quit and reopen that installed copy, then retry.",
         PermissionStatus::Unknown => "Framecraft could not determine screen recording permission. Check System Settings > Privacy & Security > Screen Recording, then retry explicitly.",
     }
+}
+
+/// Call only in response to the user's Request Access action, on the UI thread.
+/// macOS owns the prompt and approval; a false result is not proof of denial.
+pub fn request_permission() -> PermissionStatus {
+    #[cfg(target_os = "macos")]
+    {
+        #[link(name = "CoreGraphics", kind = "framework")]
+        unsafe extern "C" {
+            fn CGRequestScreenCaptureAccess() -> bool;
+        }
+        if unsafe { CGRequestScreenCaptureAccess() } {
+            PermissionStatus::Granted
+        } else {
+            permission_status()
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    PermissionStatus::Unknown
+}
+
+pub fn require_permission(status: PermissionStatus) -> Result<(), String> {
+    match status {
+        PermissionStatus::Granted => Ok(()),
+        _ => Err(permission_guidance(status).into()),
+    }
+}
+
+pub fn open_permission_settings() -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        let status = std::process::Command::new("/usr/bin/open")
+            .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")
+            .status()
+            .map_err(|e| format!("Could not open System Settings: {e}"))?;
+        if status.success() {
+            Ok(())
+        } else {
+            Err("Open System Settings > Privacy & Security > Screen & System Audio Recording manually.".into())
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    Err("Screen recording settings are available on macOS.".into())
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -153,9 +196,21 @@ pub enum CaptureMode {
 /// Call on a worker thread after hiding the editor. Native selection can remain
 /// open until the user completes it, so this must not block the UI event loop.
 pub fn capture(mode: CaptureMode) -> Result<Option<RgbaImage>, String> {
+    capture_cancellable(mode, &|| false)
+}
+
+/// Cancellation affects only private capture staging. A cancelled selector is
+/// killed and reaped before returning; its pixels never reach the editor.
+pub fn capture_cancellable(
+    mode: CaptureMode,
+    cancelled: &dyn Fn() -> bool,
+) -> Result<Option<RgbaImage>, String> {
+    if cancelled() {
+        return Ok(None);
+    }
     #[cfg(target_os = "macos")]
     {
-        capture_macos(mode)
+        run_capture(mode, &command_args(mode), cancelled)
     }
     #[cfg(not(target_os = "macos"))]
     {
@@ -174,11 +229,6 @@ fn command_args(mode: CaptureMode) -> Vec<&'static str> {
         CaptureMode::Screen => args.push("-m"),
     }
     args
-}
-
-#[cfg(target_os = "macos")]
-fn capture_macos(mode: CaptureMode) -> Result<Option<RgbaImage>, String> {
-    run_capture(mode, &command_args(mode), &|| false)
 }
 
 /// Snapshot one display without opening a picker. The index is macOS's -D index.
@@ -201,7 +251,13 @@ pub fn capture_display_cancellable(
             &["-x", "-t", "png", "-D", &index],
             cancelled,
         )?
-        .ok_or_else(|| "The display did not produce a screenshot.".into())
+        .ok_or_else(|| {
+            if cancelled() {
+                "Capture cancelled because the session changed.".into()
+            } else {
+                "The display did not produce a screenshot.".into()
+            }
+        })
     }
     #[cfg(not(target_os = "macos"))]
     {
@@ -257,7 +313,16 @@ fn run_capture(
     use std::os::unix::fs::PermissionsExt;
     use std::process::{Command, Stdio};
 
+    // Covers one-off and collection paths without prompting from a worker.
+    // Permission denial must not hide controls or start a capture subprocess.
+    if cancelled() {
+        return Ok(None);
+    }
+    require_permission(permission_status())?;
     let _hidden = HiddenControls::acquire()?;
+    if cancelled() {
+        return Ok(None);
+    }
 
     // tempfile creates a private directory; explicitly preserve its 0700 mode.
     // RAII removes both the capture and the directory on success, cancellation,
@@ -286,7 +351,9 @@ fn run_capture(
             format!("Could not start macOS screen capture: {e}. Check that /usr/sbin/screencapture is available.")
         })?;
     let deadline = (mode == CaptureMode::Screen).then_some(CAPTURE_DEADLINE);
-    let status = wait_for_capture(&mut child, deadline, cancelled)?;
+    let Some(status) = wait_for_capture(&mut child, deadline, cancelled)? else {
+        return Ok(None);
+    };
 
     let file_exists = match fs::metadata(&path) {
         Ok(metadata) => metadata.is_file(),
@@ -307,9 +374,9 @@ fn run_capture(
 
     // The shared decoder checks dimensions before allocating the full image,
     // applying the same 64-megapixel ceiling as Open Image.
-    crate::editor::load_image(&path)
-        .map(Some)
-        .map_err(|e| format!("macOS captured an image, but Framecraft could not open it: {e}"))
+    let image = crate::editor::load_image(&path)
+        .map_err(|e| format!("macOS captured an image, but Framecraft could not open it: {e}"))?;
+    Ok((!cancelled()).then_some(image))
 }
 
 #[cfg(target_os = "macos")]
@@ -317,12 +384,17 @@ fn wait_for_capture(
     child: &mut std::process::Child,
     deadline: Option<Duration>,
     cancelled: &dyn Fn() -> bool,
-) -> Result<std::process::ExitStatus, String> {
+) -> Result<Option<std::process::ExitStatus>, String> {
     let started = std::time::Instant::now();
     loop {
-        let reason = if cancelled() {
-            Some("Capture cancelled because the session changed.")
-        } else if deadline.is_some_and(|limit| started.elapsed() >= limit) {
+        if cancelled() {
+            let _ = child.kill();
+            child
+                .wait()
+                .map_err(|error| format!("Could not finish cancelling screen capture: {error}"))?;
+            return Ok(None);
+        }
+        let reason = if deadline.is_some_and(|limit| started.elapsed() >= limit) {
             Some("Screen capture timed out. Session paused; check the source and permissions, then retry.")
         } else {
             None
@@ -333,7 +405,7 @@ fn wait_for_capture(
             return Err(reason.into());
         }
         match child.try_wait() {
-            Ok(Some(status)) => return Ok(status),
+            Ok(Some(status)) => return Ok(Some(status)),
             Ok(None) => std::thread::sleep(Duration::from_millis(25)),
             Err(error) => {
                 let _ = child.kill();
@@ -387,13 +459,46 @@ fn classify_completion(
         diagnostic.chars().take(600).collect()
     };
     Err(format!(
-        "Screen capture failed. {detail} If macOS blocked access, open System Settings > Privacy & Security > Screen & System Audio Recording (Screen Recording on older macOS), allow Framecraft, then quit and reopen it. When using cargo run, macOS may list Terminal or your IDE instead."
+        "Screen capture failed. {detail} No new screenshot was loaded. Open Screen Access to check permission for this copy. If access is granted, retry with an available display or a non-empty area. This command error alone does not identify a permission problem."
     ))
 }
 
 #[cfg(test)]
 mod tests {
     use super::{classify_completion, command_args, CaptureMode};
+
+    #[test]
+    fn capture_requires_explicit_granted_status() {
+        use super::{require_permission, PermissionStatus};
+        assert!(require_permission(PermissionStatus::Granted).is_ok());
+        assert!(require_permission(PermissionStatus::NotGranted)
+            .unwrap_err()
+            .contains("Request Access"));
+        assert!(require_permission(PermissionStatus::Unknown).is_err());
+    }
+
+    #[test]
+    fn rect_failure_does_not_claim_permission_denied() {
+        let error = classify_completion(
+            CaptureMode::Area,
+            false,
+            false,
+            "could not create image from rect",
+        )
+        .unwrap_err();
+        assert!(error.contains("could not create image from rect"));
+        assert!(error.contains("does not identify a permission problem"));
+        assert!(!error.contains("Terminal"));
+    }
+
+    #[test]
+    fn pre_cancelled_capture_never_opens_native_selection() {
+        for mode in [CaptureMode::Area, CaptureMode::Window, CaptureMode::Screen] {
+            assert!(super::capture_cancellable(mode, &|| true)
+                .unwrap()
+                .is_none());
+        }
+    }
 
     #[test]
     fn repeated_region_crops_in_physical_pixels_and_rejects_size_changes() {
@@ -507,8 +612,21 @@ mod tests {
         assert!(child.try_wait().unwrap().is_some());
         let mut child = Command::new("/bin/sleep").arg("5").spawn().unwrap();
         assert!(super::wait_for_capture(&mut child, None, &|| true)
-            .unwrap_err()
-            .contains("cancelled"));
+            .unwrap()
+            .is_none());
         assert!(child.try_wait().unwrap().is_some());
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn completed_private_capture_can_be_cancelled_without_publication() {
+        let mut child = std::process::Command::new("/usr/bin/true").spawn().unwrap();
+        child.wait().unwrap();
+        assert!(super::wait_for_capture(&mut child, None, &|| true)
+            .unwrap()
+            .is_none());
+        assert!(super::wait_for_capture(&mut child, None, &|| true)
+            .unwrap()
+            .is_none());
     }
 }

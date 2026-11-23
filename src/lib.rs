@@ -4,7 +4,10 @@ pub mod desktop;
 pub mod editor;
 pub mod library;
 pub mod naming;
+#[cfg(feature = "ui")]
+pub mod native_handoff;
 pub mod output;
+pub mod quick_capture;
 pub mod session;
 pub mod session_runner;
 pub mod settings;

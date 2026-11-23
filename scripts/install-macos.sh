@@ -100,4 +100,4 @@ mv -n "$staging/Framecraft.app" "$destination_parent/"
 [[ ! -e "$staging/Framecraft.app" ]] || { printf '%s\n' 'Destination appeared during installation. Nothing was overwritten.' >&2; exit 1; }
 completed=true
 printf 'Installed %s\n' "$destination"
-printf '%s\n' 'Open Framecraft from Applications. This beta is ad-hoc signed, not notarised; macOS may ask you to allow this specific app in Privacy & Security.'
+printf '%s\n' 'Open Framecraft from Applications. Choose Capture setup to check Screen Recording access and your capture shortcut.'

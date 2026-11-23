@@ -2,6 +2,10 @@
 mod app;
 #[cfg(feature = "ui")]
 mod session_ui;
+#[cfg(feature = "ui")]
+mod setup_ui;
+#[cfg(feature = "ui")]
+mod ui_icons;
 
 use framecraft::editor::{self, Document, Style};
 use std::{error::Error, path::Path};

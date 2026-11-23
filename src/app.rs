@@ -1,6 +1,14 @@
+mod handoff;
+
 use crate::session_ui::{Action as SessionAction, ReviewFrame, SessionView};
+use crate::setup_ui::{SetupAction, SetupDraft};
+use crate::ui_icons::{self, Icon};
 use eframe::egui::{self, Color32, Pos2, RichText, Sense, Stroke, Vec2};
-use framecraft::desktop::{DesktopAction, DesktopControls};
+use framecraft::desktop::{DesktopAction, DesktopControls, QuickShortcutState};
+use framecraft::native_handoff::{
+    CaptureThumbnail, CaptureWindowGuard, EditorWindow, ThumbnailAction, ThumbnailPlacement,
+};
+use framecraft::quick_capture::{self, AfterCapture, QuickCaptureSettings};
 use framecraft::{
     capture::{self, CaptureMode},
     editor::{self, Annotation, Document, Point, Rect, Style, Theme},
@@ -21,10 +29,10 @@ use std::{
     time::{Duration, Instant},
 };
 
-const ACCENT: Color32 = Color32::from_rgb(0, 102, 220);
+const ACCENT: Color32 = Color32::from_rgb(39, 90, 223);
 const MUTED: Color32 = Color32::from_rgb(91, 99, 112);
 const INK: Color32 = Color32::from_rgb(30, 35, 43);
-const SURFACE: Color32 = Color32::from_rgb(248, 249, 251);
+const SURFACE: Color32 = Color32::from_rgb(246, 248, 251);
 const BORDER: Color32 = Color32::from_rgb(218, 222, 229);
 
 #[derive(Clone, Copy, PartialEq)]
@@ -35,6 +43,7 @@ enum Tool {
     Redact,
     Crop,
     Highlight,
+    Pixelate,
     Pen,
     Text,
     Step,
@@ -67,6 +76,8 @@ impl Edits {
 enum Outcome {
     Loaded(image::RgbaImage, String),
     Captured(Option<image::RgbaImage>),
+    AutoSaved(image::RgbaImage, Result<PathBuf, String>),
+    Direct(handoff::LastCapture),
     Exported(PathBuf, u64),
     DragReady(output::DragFile, Option<u64>, image::RgbaImage, String),
     Revealed,
@@ -89,6 +100,8 @@ enum Pending {
     SelectDisplay(u32),
     Session(CaptureHandle, CaptureVariant),
     Quit,
+    CloseScreenshot,
+    EditLastCapture,
 }
 struct OcrJob {
     revision: u64,
@@ -103,6 +116,33 @@ struct PackDraft {
     previews: Vec<egui::TextureHandle>,
 }
 
+struct TextDraft {
+    index: Option<usize>,
+    position: Point,
+    text: String,
+    size: f32,
+    colour: Color32,
+    background: Option<[u8; 4]>,
+    focus: bool,
+}
+impl TextDraft {
+    fn validation_error(&self) -> Option<&'static str> {
+        if self.text.trim().is_empty() {
+            Some("Type some text before adding the label.")
+        } else if self.text.chars().count() > editor::MAX_TEXT_CHARS {
+            Some("Keep the label to 2,048 characters or fewer.")
+        } else if self.text.split('\n').count() > editor::MAX_TEXT_LINES {
+            Some("Keep the label to 32 lines or fewer.")
+        } else if self.text.chars().any(|c| c.is_control() && c != '\n') {
+            Some("Remove tabs and other control characters. Line breaks are supported.")
+        } else if !self.size.is_finite() || !(8.0..=128.0).contains(&self.size) {
+            Some("Choose a text size from 8 to 128 pixels.")
+        } else {
+            None
+        }
+    }
+}
+
 pub struct Framecraft {
     page: Page,
     session: SessionView,
@@ -112,10 +152,31 @@ pub struct Framecraft {
     editing_handle: Option<CaptureHandle>,
     selected: Option<usize>,
     moving: Option<Annotation>,
-    text_input: String,
+    text_draft: Option<TextDraft>,
     text_size: f32,
     step_number: u32,
     flat_texture: Option<egui::TextureHandle>,
+    fresh_capture: bool,
+    highlight_colour: [u8; 3],
+    pixelate_block: u32,
+    block_input: String,
+    block_error: Option<String>,
+    colour_dialog: Option<([u8; 3], [u8; 3])>,
+    colour_before: Option<Edits>,
+    colour_was_saved: bool,
+    colour_return: Option<egui::Id>,
+    property_before: Option<Edits>,
+    property_block_before: Option<u32>,
+    property_was_saved: bool,
+    gesture_before: Option<Edits>,
+    gesture_was_saved: bool,
+    capture_cancel: Option<Arc<AtomicBool>>,
+    editor_window: Option<EditorWindow>,
+    capture_window_guard: Option<CaptureWindowGuard>,
+    last_capture: Option<handoff::LastCapture>,
+    thumbnail: CaptureThumbnail,
+    screen_access_open: bool,
+    screen_access_status: capture::PermissionStatus,
     saved_revision: u64,
     rendered_revision: Option<u64>,
     pending: Option<Pending>,
@@ -135,6 +196,10 @@ pub struct Framecraft {
     desktop: Option<DesktopControls>,
     desktop_attempted: bool,
     shortcuts_settings: ShortcutSettings,
+    quick_settings: QuickCaptureSettings,
+    quick_shortcut_state: QuickShortcutState,
+    offer_shortcut_try: bool,
+    setup: Option<SetupDraft>,
     settings_open: bool,
     settings_error: Option<String>,
     shortcut_draft: Option<ShortcutSettings>,
@@ -162,7 +227,32 @@ pub struct Framecraft {
 
 impl Framecraft {
     pub fn new(cc: &eframe::CreationContext<'_>, demo: bool) -> Self {
-        Self::with_context(&cc.egui_ctx, demo)
+        let mut app = Self::with_context(&cc.egui_ctx, demo);
+        if cfg!(target_os = "macos") {
+            match EditorWindow::from_handle(cc) {
+                Ok(window) => app.editor_window = Some(window),
+                Err(error) => app.notify(error, true),
+            }
+        }
+        match QuickCaptureSettings::path()
+            .and_then(|path| QuickCaptureSettings::load_with_review(&path, &app.shortcuts_settings))
+        {
+            Ok((settings, warning)) => {
+                if let Some(warning) = warning {
+                    app.setup = Some(SetupDraft::review_shortcut(settings.clone(), warning));
+                }
+                app.quick_settings = settings;
+            }
+            Err(error) => {
+                app.notify(&error, true);
+                app.setup = Some(SetupDraft::new(app.quick_settings.clone()));
+                app.setup.as_mut().unwrap().error = Some(error);
+            }
+        }
+        if !demo && !app.quick_settings.setup_complete && app.setup.is_none() {
+            app.setup = Some(SetupDraft::new(app.quick_settings.clone()));
+        }
+        app
     }
 
     fn with_context(ctx: &egui::Context, demo: bool) -> Self {
@@ -178,7 +268,7 @@ impl Framecraft {
             &mut visuals.widgets.hovered,
             &mut visuals.widgets.active,
         ] {
-            widget.corner_radius = egui::CornerRadius::same(6);
+            widget.corner_radius = egui::CornerRadius::same(8);
         }
         visuals.widgets.inactive.bg_fill = Color32::WHITE;
         visuals.widgets.inactive.weak_bg_fill = Color32::WHITE;
@@ -208,10 +298,31 @@ impl Framecraft {
             editing_handle: None,
             selected: None,
             moving: None,
-            text_input: String::new(),
+            text_draft: None,
             text_size: 28.0,
             step_number: 1,
             flat_texture: None,
+            fresh_capture: false,
+            highlight_colour: [255, 212, 71],
+            pixelate_block: 12,
+            block_input: "12".into(),
+            block_error: None,
+            colour_dialog: None,
+            colour_before: None,
+            colour_was_saved: false,
+            colour_return: None,
+            property_before: None,
+            property_block_before: None,
+            property_was_saved: false,
+            gesture_before: None,
+            gesture_was_saved: false,
+            capture_cancel: None,
+            editor_window: None,
+            capture_window_guard: None,
+            last_capture: None,
+            thumbnail: CaptureThumbnail::default(),
+            screen_access_open: false,
+            screen_access_status: capture::PermissionStatus::Unknown,
             saved_revision: 0,
             rendered_revision: None,
             pending: None,
@@ -231,6 +342,10 @@ impl Framecraft {
             desktop: None,
             desktop_attempted: false,
             shortcuts_settings: ShortcutSettings::load().unwrap_or_default(),
+            quick_settings: QuickCaptureSettings::default(),
+            quick_shortcut_state: QuickShortcutState::Off,
+            offer_shortcut_try: false,
+            setup: None,
             settings_open: false,
             settings_error: None,
             shortcut_draft: None,
@@ -305,6 +420,14 @@ impl Framecraft {
     }
     fn load(&mut self, ctx: egui::Context, pixels: image::RgbaImage, name: String) {
         self.page = Page::Editor;
+        self.fresh_capture = false;
+        self.colour_dialog = None;
+        self.text_draft = None;
+        self.property_before = None;
+        self.property_block_before = None;
+        self.block_error = None;
+        self.gesture_before = None;
+        self.colour_before = None;
         self.editing_capture = None;
         self.editing_handle = None;
         self.selected = None;
@@ -355,17 +478,82 @@ impl Framecraft {
         self.job = Some(Job { rx });
         self.notify(label, false);
     }
+    fn open_setup(&mut self) {
+        if self.editor_mutation_allowed() && !self.session.active() {
+            self.setup = Some(SetupDraft::new(self.quick_settings.clone()));
+        }
+    }
+    fn finish_setup(&mut self, mut candidate: QuickCaptureSettings) -> Result<(), String> {
+        candidate.setup_complete = true;
+        candidate.validate(&self.shortcuts_settings)?;
+        if candidate.after_capture.saves_file() {
+            std::fs::create_dir_all(&candidate.destination)
+                .map_err(|e| format!("Could not create save folder: {e}"))?;
+            capture::probe_destination(&candidate.destination).map_err(|e| e.to_string())?;
+        }
+        let controls = self
+            .desktop
+            .as_mut()
+            .ok_or("Menu controls are unavailable. Reopen Framecraft and retry setup.")?;
+        let shortcut = candidate
+            .shortcut_enabled
+            .then_some(candidate.shortcut.as_str());
+        let warning =
+            controls.commit_quick_capture(shortcut, || candidate.save(&self.shortcuts_settings))?;
+        self.quick_shortcut_state = if candidate.shortcut_enabled {
+            QuickShortcutState::Active
+        } else {
+            QuickShortcutState::Off
+        };
+        controls.set_quick_shortcut_status(self.quick_shortcut_state, &candidate.shortcut_label());
+        self.offer_shortcut_try = candidate.shortcut_enabled;
+        if !candidate.show_thumbnail || !candidate.after_capture.stays_in_source() {
+            self.thumbnail.hide();
+        }
+        self.quick_settings = candidate;
+        if let Some(warning) = warning {
+            self.notify(warning, true);
+        } else {
+            self.notify("Capture setup saved.", false);
+        }
+        Ok(())
+    }
+    fn rehearse_shortcut(&mut self) {
+        self.offer_shortcut_try = false;
+        let output = match self.quick_settings.after_capture {
+            AfterCapture::Edit => "The selection opens in the editor.".into(),
+            AfterCapture::Save | AfterCapture::SaveAndReturn => format!(
+                "Your PNG goes into {}.",
+                self.quick_settings.destination.display()
+            ),
+            AfterCapture::CopyAndReturn => {
+                "Press Command + V in that app to paste the selection.".into()
+            }
+        };
+        self.notify(format!("Switch to another app and press {}. Drag to capture or press Escape to cancel. {output} Reopen Capture setup from the menu bar to make changes.", self.quick_settings.shortcut_label()), false);
+    }
     fn open_settings(&mut self) {
-        if !self.settings_open {
+        if self.setup.is_some() || self.text_draft.is_some() {
+            return;
+        }
+        if !self.settings_open && self.text_draft.is_none() {
             self.shortcut_draft = Some(self.shortcuts_settings.clone());
             self.settings_error = None;
             self.settings_open = true;
         }
     }
     fn capture_available(&self) -> bool {
-        self.editor_mutation_allowed() && !self.session.active()
+        self.editor_mutation_allowed() && !self.session.active() && self.selecting_display.is_none()
     }
     fn capture(&mut self, ctx: &egui::Context, mode: CaptureMode) {
+        self.capture_with_permission(ctx, mode, capture::permission_status);
+    }
+    fn capture_with_permission(
+        &mut self,
+        ctx: &egui::Context,
+        mode: CaptureMode,
+        status: impl FnOnce() -> capture::PermissionStatus,
+    ) {
         if !self.capture_available() {
             self.notify(
                 if self.session.active() {
@@ -377,7 +565,22 @@ impl Framecraft {
             );
             return;
         }
+        if cfg!(target_os = "macos") && !self.check_screen_access(status()) {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+            ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
+            ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+            return;
+        }
         self.request(ctx, Pending::Capture(mode));
+    }
+    fn check_screen_access(&mut self, status: capture::PermissionStatus) -> bool {
+        self.screen_access_status = status;
+        if let Err(message) = capture::require_permission(status) {
+            self.screen_access_open = true;
+            self.notify(message, true);
+            return false;
+        }
+        true
     }
     fn capture_now(&mut self, ctx: &egui::Context, mode: CaptureMode) {
         // Recheck after an unsaved-edit prompt: a session may have started meanwhile.
@@ -398,20 +601,40 @@ impl Framecraft {
             );
             return;
         }
-        ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
-        let restore = ctx.clone();
+        if self.editor_window.is_none() {
+            self.notify("Framecraft could not prepare its window for capture. Reopen the app and try again.", true);
+            return;
+        }
+        if !self.check_screen_access(capture::permission_status()) {
+            handoff::show_editor(ctx);
+            return;
+        }
+        let cancel = Arc::new(AtomicBool::new(false));
+        self.capture_cancel = Some(cancel.clone());
+        self.thumbnail.hide();
+        self.capture_window_guard = self.editor_window.as_ref().map(EditorWindow::begin_capture);
+        let preferences = self.quick_settings.clone();
         self.start_job(
             ctx,
             "Select an area or window. Escape cancels.",
             move || {
                 // Give the compositor a moment to remove our editor from the desktop.
                 std::thread::sleep(Duration::from_millis(350));
-                let result = capture::capture(mode).map(Outcome::Captured);
-                restore.send_viewport_cmd(egui::ViewportCommand::Visible(true));
-                restore.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
-                restore.send_viewport_cmd(egui::ViewportCommand::Focus);
-                restore.request_repaint();
-                result
+                let cancelled = || cancel.load(Ordering::Acquire);
+                let placement = ThumbnailPlacement::before_selection(mode);
+                let pixels = capture::capture_cancellable(mode, &cancelled)?;
+                let placement = if pixels.is_some() {
+                    placement.confirm_after_selection(mode)
+                } else {
+                    ThumbnailPlacement::Unavailable
+                };
+                Ok(handoff::finish_capture(
+                    placement,
+                    pixels,
+                    &preferences,
+                    &cancelled,
+                    framecraft::native_handoff::copy_image_local,
+                ))
             },
         );
     }
@@ -547,14 +770,21 @@ impl Framecraft {
             None
         } else {
             match rfd::FileDialog::new()
-                .set_file_name("Framecraft.png")
+                .set_directory(&self.quick_settings.destination)
+                .set_file_name(format!(
+                    "{}-edited.png",
+                    self.quick_settings.filename_prefix
+                ))
                 .add_filter("PNG", &["png"])
                 .save_file()
             {
                 // Preserve the exact path approved by the save dialog.
                 // The file is encoded as PNG regardless of its chosen suffix.
                 Some(path) => Some(path),
-                None => return,
+                None => {
+                    self.continue_after_save = false;
+                    return;
+                }
             }
         };
         let doc = self.doc.as_ref().unwrap().clone();
@@ -587,6 +817,10 @@ impl Framecraft {
         });
         if let Some(result) = completed {
             self.job = None;
+            let was_one_off = self.capture_cancel.take().is_some();
+            // Restore only the pre-capture presentation. Foregrounding the
+            // editor is a separate decision, made below for edit routes.
+            self.capture_window_guard.take();
             match result {
                 Ok(Outcome::RegionSource(pixels, display, epoch)) => {
                     if epoch != self.source_epoch || self.session.active() {
@@ -629,12 +863,42 @@ impl Framecraft {
                 }
                 Ok(Outcome::Loaded(pixels, name)) => self.load(ctx.clone(), pixels, name),
                 Ok(Outcome::Captured(Some(pixels))) => {
-                    self.load(ctx.clone(), pixels, "New capture".into())
+                    self.last_capture = None;
+                    self.load(ctx.clone(), pixels, "New capture".into());
+                    self.fresh_capture = true;
+                    handoff::show_editor(ctx);
+                }
+                Ok(Outcome::AutoSaved(pixels, saved)) => {
+                    self.last_capture = None;
+                    self.load(ctx.clone(), pixels, "New capture".into());
+                    handoff::show_editor(ctx);
+                    match saved {
+                        Ok(path) => {
+                            self.name = path
+                                .file_name()
+                                .unwrap_or_default()
+                                .to_string_lossy()
+                                .into_owned();
+                            self.notify(
+                                format!(
+                                    "Saved {}. Edits can be saved as a separate copy.",
+                                    path.display()
+                                ),
+                                false,
+                            );
+                        }
+                        Err(error) => {
+                            self.fresh_capture = true;
+                            self.notify(format!("Automatic save failed: {error} Your screenshot is open. Choose Save PNG to keep it."), true);
+                        }
+                    }
                 }
                 Ok(Outcome::Captured(None)) => self.notify("Capture cancelled.", false),
+                Ok(Outcome::Direct(capture)) => self.receive_direct_capture(ctx, capture),
                 Ok(Outcome::Exported(path, revision)) => {
                     if revision == self.revision {
                         self.saved_revision = revision;
+                        self.fresh_capture = false;
                     }
                     self.session.refresh_variants();
                     self.notify(format!("Saved {}", path.display()), false);
@@ -699,10 +963,21 @@ impl Framecraft {
                     self.notify("Copied. Redactions are baked into the pixels.", false);
                 }
                 Err(error) => {
+                    self.continue_after_save = false;
                     self.pack_cancel = None;
                     self.pack_progress = None;
-                    self.notify(error, true);
+                    if was_one_off {
+                        handoff::show_editor(ctx);
+                        self.notify(format!("Capture failed before output: {error}"), true);
+                    } else {
+                        self.notify(error, true);
+                    }
                 }
+            }
+            if was_one_off {
+                // A background result may be the final repaint. Publish the
+                // receipt now so a failure is visible without opening a menu.
+                self.sync_last_capture_controls();
             }
         }
         let rendered = self
@@ -741,12 +1016,7 @@ impl Framecraft {
                 self.dirty = None;
                 std::thread::spawn(move || {
                     let result = editor::render(&doc).and_then(|output| {
-                        let mut flat = doc;
-                        flat.crop = None;
-                        flat.style.padding = 0;
-                        flat.style.radius = 0;
-                        flat.style.shadow = false;
-                        editor::render(&flat).map(|flat| (output, flat))
+                        editor::render_edit_source(&doc).map(|flat| (output, flat))
                     });
                     let _ = tx.send(result);
                     repaint.request_repaint();
@@ -763,15 +1033,26 @@ impl Framecraft {
             && self.pack.is_none()
             && !self.closing
             && !self.settings_open
+            && self.setup.is_none()
+            && self.colour_dialog.is_none()
+            && self.text_draft.is_none()
+            && self.ocr_job.is_none()
+            && self.ocr_text.is_none()
+            && self.drag_ready.is_none()
     }
     fn shortcuts(&mut self, ctx: &egui::Context) {
+        if self.setup.is_some() {
+            return;
+        }
         if !self.closing
             && self.pending.is_none()
+            && self.colour_dialog.is_none()
+            && self.text_draft.is_none()
             && self.job.is_none()
             && !ctx.wants_keyboard_input()
         {
             if ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::Comma)) {
-                self.open_settings();
+                self.open_setup();
             }
             if !self.settings_open
                 && ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::O))
@@ -828,16 +1109,242 @@ impl Framecraft {
                 self.move_selected(delta);
             }
         }
-        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
-            if self.moving.take().is_some() {
-                self.undo(false);
-            }
-            self.drag = None;
-            self.freehand.clear();
-            self.selected = None;
-            self.tool = Tool::Select;
+        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
+            self.cancel_tool();
         }
     }
+    fn close_screenshot(&mut self) {
+        self.page = if self.editing_capture.is_some() {
+            Page::Session
+        } else {
+            Page::Editor
+        };
+        self.doc = None;
+        self.source_texture = None;
+        self.flat_texture = None;
+        self.preview_texture = None;
+        self.editing_capture = None;
+        self.editing_handle = None;
+        self.selected = None;
+        self.moving = None;
+        self.drag = None;
+        self.freehand.clear();
+        self.undo.clear();
+        self.redo.clear();
+        self.tool = Tool::Select;
+        self.fresh_capture = false;
+        self.colour_dialog = None;
+        self.text_draft = None;
+        self.property_before = None;
+        self.property_block_before = None;
+        self.block_error = None;
+        self.gesture_before = None;
+        self.colour_before = None;
+        self.style_before = None;
+        self.changed();
+        self.notify(
+            "Screenshot closed. Framecraft is ready for another capture.",
+            false,
+        );
+    }
+    fn begin_move(&mut self) {
+        self.gesture_before = self.doc.as_ref().map(Edits::read);
+        self.gesture_was_saved = self.saved_revision == self.revision;
+    }
+    fn finish_move(&mut self) {
+        let changed = self
+            .moving
+            .as_ref()
+            .zip(
+                self.selected
+                    .and_then(|i| self.doc.as_ref()?.annotations.get(i)),
+            )
+            .is_some_and(|(a, b)| a != b);
+        if changed {
+            if let Some(before) = self.gesture_before.take() {
+                self.push_edit(before);
+            }
+        } else {
+            self.gesture_before = None;
+            if self.gesture_was_saved {
+                self.saved_revision = self.revision;
+            }
+        }
+        self.moving = None;
+    }
+    fn cancel_tool(&mut self) {
+        if self.text_draft.is_some() {
+            self.cancel_text_draft();
+            return;
+        }
+        if let Some(before) = self.property_block_before.take() {
+            if let Some(edits) = self.property_before.take() {
+                if let Some(doc) = &mut self.doc {
+                    edits.apply(doc);
+                }
+                self.changed();
+                if self.property_was_saved {
+                    self.saved_revision = self.revision;
+                }
+            } else {
+                self.pixelate_block = before;
+            }
+            return;
+        }
+        if let (Some(mark), Some(index)) = (self.moving.take(), self.selected) {
+            if let Some(doc) = &mut self.doc {
+                doc.annotations[index] = mark;
+            }
+            self.gesture_before = None;
+            self.changed();
+            if self.gesture_was_saved {
+                self.saved_revision = self.revision;
+            }
+        }
+        self.drag = None;
+        self.freehand.clear();
+        self.tool = Tool::Select;
+        self.notify("Tool cancelled. Completed marks are retained.", false);
+    }
+    fn push_edit(&mut self, before: Edits) {
+        self.undo.push(before);
+        if self.undo.len() > 40 {
+            self.undo.remove(0);
+        }
+        self.redo.clear();
+    }
+    fn begin_colour(&mut self) {
+        let rgb = self.highlight_value();
+        self.colour_before = self.doc.as_ref().map(Edits::read);
+        self.colour_was_saved = self.saved_revision == self.revision;
+        self.colour_dialog = Some((rgb, rgb));
+    }
+    fn update_colour(&mut self, original: [u8; 3], draft: [u8; 3], finish: bool, commit: bool) {
+        if finish {
+            self.colour_dialog = None;
+        }
+        let value = if finish && !commit { original } else { draft };
+        if self.highlight_value() != value {
+            if let Some(Annotation::Highlight { colour, .. }) = self
+                .selected
+                .and_then(|i| self.doc.as_mut()?.annotations.get_mut(i))
+            {
+                *colour = [value[0], value[1], value[2], 80];
+                self.changed();
+            } else {
+                self.highlight_colour = value;
+            }
+        }
+        if finish {
+            if commit && draft != original && self.selected.is_some() {
+                if let Some(before) = self.colour_before.take() {
+                    self.push_edit(before);
+                }
+            } else {
+                self.colour_before = None;
+                if self.colour_was_saved {
+                    self.saved_revision = self.revision;
+                }
+            }
+        } else {
+            self.colour_dialog = Some((original, draft));
+        }
+    }
+    fn block_value(&self) -> u32 {
+        match self
+            .selected
+            .and_then(|i| self.doc.as_ref()?.annotations.get(i))
+        {
+            Some(Annotation::Pixelate { block_size, .. }) => *block_size,
+            _ => self.pixelate_block,
+        }
+    }
+    fn begin_block(&mut self) {
+        if self.property_block_before.is_none() {
+            self.property_block_before = Some(self.block_value());
+            self.property_was_saved = self.saved_revision == self.revision;
+            self.property_before = self
+                .selected
+                .and_then(|_| self.doc.as_ref().map(Edits::read));
+        }
+    }
+    fn preview_block(&mut self, value: u32) {
+        self.begin_block();
+        if self.block_value() == value {
+            return;
+        }
+        if let Some(Annotation::Pixelate { block_size, .. }) = self
+            .selected
+            .and_then(|i| self.doc.as_mut()?.annotations.get_mut(i))
+        {
+            *block_size = value;
+            self.changed();
+        } else {
+            self.pixelate_block = value;
+        }
+    }
+    fn finish_block(&mut self, commit: bool) {
+        if !commit {
+            self.cancel_tool();
+        } else {
+            let changed = self
+                .property_block_before
+                .take()
+                .is_some_and(|v| v != self.block_value());
+            if let Some(before) = self.property_before.take() {
+                if changed {
+                    self.push_edit(before);
+                } else if self.property_was_saved {
+                    self.saved_revision = self.revision;
+                }
+            }
+        }
+        self.block_input = self.block_value().to_string();
+    }
+    fn parse_block_input(&mut self) -> Option<u32> {
+        match self.block_input.parse::<u32>() {
+            Ok(v) if (2..=128).contains(&v) => {
+                self.block_error = None;
+                Some(v)
+            }
+            _ => {
+                self.block_error = Some("Enter a whole number from 2 to 128.".into());
+                None
+            }
+        }
+    }
+    fn highlight_value(&self) -> [u8; 3] {
+        if let Some(Annotation::Highlight { colour, .. }) = self
+            .selected
+            .and_then(|i| self.doc.as_ref()?.annotations.get(i))
+        {
+            return [colour[0], colour[1], colour[2]];
+        }
+        self.highlight_colour
+    }
+    fn set_highlight_colour(&mut self, rgb: [u8; 3]) {
+        if self.selected.is_some_and(|i| {
+            matches!(
+                self.doc.as_ref().and_then(|d| d.annotations.get(i)),
+                Some(Annotation::Highlight { .. })
+            )
+        }) {
+            if self.highlight_value() == rgb {
+                return;
+            }
+            self.checkpoint();
+            if let Some(Annotation::Highlight { colour, .. }) = self
+                .selected
+                .and_then(|i| self.doc.as_mut()?.annotations.get_mut(i))
+            {
+                *colour = [rgb[0], rgb[1], rgb[2], 80];
+            }
+            self.changed();
+        } else {
+            self.highlight_colour = rgb;
+        }
+    }
+
     fn header(&mut self, ctx: &egui::Context) {
         egui::TopBottomPanel::top("header")
             .frame(egui::Frame::new().fill(SURFACE).inner_margin(14.0))
@@ -845,23 +1352,60 @@ impl Framecraft {
                 ui.horizontal(|ui| {
                     ui.label(RichText::new("Framecraft").size(18.0).strong());
                     ui.add_space(16.0);
-                    ui.selectable_value(&mut self.page, Page::Editor, "Screenshot");
-                    ui.selectable_value(&mut self.page, Page::Session, "Sessions");
+                    ui.add_enabled_ui(self.editor_mutation_allowed(),|ui|{ui.selectable_value(&mut self.page, Page::Editor, "Screenshot");ui.selectable_value(&mut self.page, Page::Session, "Sessions");});
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.button("Keyboard Shortcuts…").clicked() { self.open_settings(); }
+                        if icon_enabled(ui, self.capture_available(), "Capture setup", Icon::Settings).clicked() { self.open_setup(); }
                         ui.add_enabled_ui(self.capture_available(), |ui| {
                             ui.menu_button("More Capture", |ui| {
+                                if ui_icons::button(ui, "Session & app shortcuts…", Icon::Keyboard, false).clicked() { self.open_settings(); ui.close_menu(); }
+                                if ui.button("Screen Access…").clicked() {
+                                    self.screen_access_open = true;
+                                    self.screen_access_status = capture::permission_status();
+                                    ui.close_menu();
+                                }
+                                ui.separator();
                                 for (label, mode) in [("Capture Window…", CaptureMode::Window), ("Capture Screen", CaptureMode::Screen)] {
                                     if ui.button(label).clicked() { ui.close_menu(); self.capture(ctx, mode); }
                                 }
+                                if self.last_capture.is_some() {
+                                    ui.separator();
+                                    if ui.button("Edit Last Capture…").clicked() { ui.close_menu(); self.edit_last_capture(ctx); }
+                                    if self.last_capture.as_ref().is_some_and(handoff::LastCapture::failed) && ui.button("Retry Last Output").clicked() { ui.close_menu(); self.retry_last_output(ctx); }
+                                    if ui.button("Clear Last Capture").clicked() { ui.close_menu(); self.clear_last_capture(); }
+                                }
                             });
-                            if ui.add(egui::Button::new(RichText::new("Capture Area…").color(Color32::WHITE)).fill(ACCENT))
+                            if ui_icons::button(ui,"Capture Area…",Icon::Capture,false)
                                 .on_hover_text("Draw a rectangle on screen. Escape cancels. Command + Option + 4.").clicked() {
                                 self.capture(ctx, CaptureMode::Area);
                             }
                         });
                     });
                 });
+                if self.screen_access_open {
+                    ui.separator();
+                    ui.heading("Screen Access");
+                    ui.label(capture::permission_guidance(self.screen_access_status));
+                    ui.add_enabled_ui(self.capture_available(), |ui| {
+                        ui.horizontal_wrapped(|ui| {
+                            if ui.button("Request Access").clicked() {
+                                self.screen_access_status = capture::request_permission();
+                            }
+                            if ui.button("Open System Settings").clicked() {
+                                if let Err(error) = capture::open_permission_settings() { self.notify(error, true); }
+                            }
+                            if ui.button("Check Again").clicked() {
+                                self.screen_access_status = capture::permission_status();
+                            }
+                            if ui.button("Close").clicked() { self.screen_access_open = false; }
+                        });
+                    });
+                    ui.label("After allowing access, quit and reopen Framecraft if macOS requests it. Capture starts only when you explicitly retry.");
+                    ui.collapsing("Which copy is running?", |ui| {
+                        ui.label(concat!("Framecraft ", env!("CARGO_PKG_VERSION")));
+                        if let Ok(path) = std::env::current_exe() { ui.label(path.display().to_string()); }
+                        ui.label("Use the copy in Applications. A Terminal or IDE launch can have a different permission identity. Updates to an ad-hoc-signed beta may require renewed approval.");
+                    });
+                }
                 if self.session.active() {
                     ui.add_space(6.0);
                     ui.label(RichText::new("A capture session is active. Stop it in Sessions before taking a separate screenshot.").small().color(MUTED));
@@ -870,13 +1414,13 @@ impl Framecraft {
                     ui.add_space(12.0);
                     ui.separator();
                     ui.add_space(6.0);
-                    ui.horizontal(|ui| {
-                        if ui.add_enabled(self.editor_mutation_allowed(), egui::Button::new("Open Image…")).clicked() { self.open(ctx); }
-                        if self.saved_revision != self.revision { ui.label(RichText::new("Unsaved edits").small().color(MUTED)); }
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.horizontal_wrapped(|ui| {
+                        if icon_enabled(ui,self.editor_mutation_allowed(),"Open Image…",Icon::Folder).clicked() { self.open(ctx); }
+                        if self.fresh_capture || self.saved_revision != self.revision { ui.label(RichText::new("Unsaved edits").small().color(MUTED)); }
+                            if icon_enabled(ui,self.editor_mutation_allowed(),"Close screenshot",Icon::Close).clicked(){self.request(ctx,Pending::CloseScreenshot);}
                             let ready = self.handoff_ready() && self.editor_mutation_allowed();
-                            if ui.add_enabled(ready, egui::Button::new(RichText::new("Copy Image").color(Color32::WHITE)).fill(ACCENT)).clicked() { self.export(ctx, true); }
-                            if ui.add_enabled(ready, egui::Button::new("Save PNG…")).clicked() { self.export(ctx, false); }
+                            if icon_enabled(ui,ready,"Copy image",Icon::Copy).clicked() { self.export(ctx, true); }
+                            if icon_enabled(ui,ready,"Save PNG…",Icon::Save).clicked() { self.export(ctx, false); }
                             if self.editing_capture.is_some() && ui.add_enabled(ready, egui::Button::new("Save Edited Copy")).clicked() { self.save_edited_copy(ctx); }
                             ui.add_enabled_ui(self.editor_mutation_allowed(), |ui| {
                                 ui.menu_button("More Actions", |ui| {
@@ -892,92 +1436,94 @@ impl Framecraft {
                                     }
                                 });
                             });
-                        });
                     });
                 }
             });
     }
-    fn sidebar(&mut self, ctx: &egui::Context) {
-        egui::SidePanel::left("controls")
-            .exact_width(236.0)
+    fn toolrail(&mut self, ctx: &egui::Context) {
+        egui::SidePanel::left("tools")
+            .exact_width(132.)
             .resizable(false)
-            .frame(egui::Frame::new().fill(SURFACE).inner_margin(16.0))
+            .frame(egui::Frame::new().fill(SURFACE).inner_margin(8.))
             .show(ctx, |ui| {
-                if !self.editor_mutation_allowed() {
-                    ui.disable();
-                }
-                egui::ScrollArea::vertical().show(ui, |ui| {
-                    section(ui, "Annotate");
-                    ui.add_enabled_ui(self.doc.is_some(), |ui| {
-                        egui::Grid::new("annotation-tools")
-                            .num_columns(2)
-                            .spacing([6.0, 6.0])
-                            .show(ui, |ui| {
-                                for (index, (tool, label, detail)) in [
-                            (
-                                Tool::Select,
-                                "Select / move",
-                                "Select a mark to edit, move or delete",
-                            ),
-                            (Tool::Text, "Text", "Click to place a text label"),
-                            (
-                                Tool::Step,
-                                "Numbered step",
-                                "Click to place a numbered marker",
-                            ),
-                            (Tool::Arrow, "Arrow", "Point to what matters"),
-                            (Tool::Pen, "Draw", "Draw freehand"),
-                            (
-                                Tool::Highlight,
-                                "Highlight",
-                                "Highlight without obscuring text",
-                            ),
-                            (Tool::Box, "Rectangle", "Frame a detail"),
-                            (
-                                Tool::Redact,
-                                "Redact",
-                                "Hide a detail in the exported image; the original is retained",
-                            ),
-                            (Tool::Crop, "Crop", "Keep the useful part"),
-                        ].into_iter().enumerate() {
-                            let chosen = self.tool == tool;
-                            if ui
-                                .add_sized([99.0, 34.0], egui::Button::new(label).selected(chosen))
-                                .on_hover_text(detail)
-                                .clicked()
-                            {
+                ui.add_enabled_ui(self.editor_mutation_allowed(), |ui| {
+                    egui::ScrollArea::vertical().show(ui, |ui| {
+                        section(ui, "Tools");
+                        for (tool, label, icon) in [
+                            (Tool::Select, "Select", Icon::Select),
+                            (Tool::Highlight, "Highlight", Icon::Highlight),
+                            (Tool::Pixelate, "Pixelate", Icon::Pixelate),
+                            (Tool::Redact, "Redact", Icon::Redact),
+                            (Tool::Arrow, "Arrow", Icon::Arrow),
+                            (Tool::Box, "Rectangle", Icon::Rectangle),
+                            (Tool::Pen, "Draw", Icon::Pen),
+                            (Tool::Text, "Text", Icon::Text),
+                            (Tool::Step, "Step", Icon::Step),
+                            (Tool::Crop, "Crop", Icon::Crop),
+                        ] {
+                            if ui_icons::full_width(ui, label, icon, self.tool == tool).clicked() {
+                                self.cancel_tool();
+                                self.selected = None;
                                 self.tool = tool;
                                 self.preview = false;
-                                self.drag = None;
-                                self.freehand.clear();
+                                self.notify(
+                                    match tool {
+                                        Tool::Select => "Select a mark to adjust it.".into(),
+                                        Tool::Text => "Click the image where the text should go, then type your label.".into(),
+                                        Tool::Step => "Click the image to place a numbered step.".into(),
+                                        _ => format!(
+                                            "{label}: drag to draw. Escape cancels a held gesture."
+                                        ),
+                                    },
+                                    false,
+                                );
                             }
-                            if index % 2 == 1 { ui.end_row(); }
                         }
-                            });
-                        self.annotation_controls(ui);
-                        ui.add_space(6.0);
-                        if !matches!(self.tool, Tool::Select | Tool::Crop) {
-                            ui.horizontal(|ui| {
-                                ui.label("Ink");
-                                ui.color_edit_button_srgba(&mut self.colour);
-                            });
-                            ui.add(egui::Slider::new(&mut self.stroke, 2.0..=16.0).text("Weight"));
-                        }
-                        ui.horizontal(|ui| {
-                            if ui
-                                .add_enabled(!self.undo.is_empty(), egui::Button::new("Undo"))
-                                .clicked()
-                            {
+                        ui.separator();
+                        ui.add_enabled_ui(!self.undo.is_empty(), |ui| {
+                            if ui_icons::full_width(ui, "Undo", Icon::Undo, false).clicked() {
                                 self.undo(false);
                             }
-                            if ui
-                                .add_enabled(!self.redo.is_empty(), egui::Button::new("Redo"))
-                                .clicked()
-                            {
+                        });
+                        ui.add_enabled_ui(!self.redo.is_empty(), |ui| {
+                            if ui_icons::full_width(ui, "Redo", Icon::Redo, false).clicked() {
                                 self.undo(true);
                             }
                         });
                     });
+                });
+            });
+    }
+    fn sidebar(&mut self, ctx: &egui::Context) {
+        egui::SidePanel::right("properties")
+            .exact_width(236.)
+            .resizable(false)
+            .frame(
+                egui::Frame::new()
+                    .fill(Color32::from_rgb(250, 251, 253))
+                    .inner_margin(16.),
+            )
+            .show(ctx, |ui| {
+                ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
+                if !self.editor_mutation_allowed() {
+                    ui.disable();
+                }
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    self.property_controls(ui);
+                    self.annotation_controls(ui);
+                    if self.tool != Tool::Select {
+                        ui.separator();
+                        if ui_icons::button(ui, "Cancel tool", Icon::Cancel, false).clicked() {
+                            self.cancel_tool();
+                        }
+                        ui.label(
+                            RichText::new(
+                                "Escape cancels a held drag. Undo reverses a completed mark.",
+                            )
+                            .small()
+                            .color(MUTED),
+                        );
+                    }
                     ui.add_space(16.0);
                     let mut changed = false;
                     let before = self.doc.as_ref().map(Edits::read);
@@ -1061,7 +1607,7 @@ impl Framecraft {
         egui::CentralPanel::default()
             .frame(
                 egui::Frame::new()
-                    .fill(Color32::from_rgb(237, 240, 245))
+                    .fill(Color32::from_rgb(232, 237, 244))
                     .inner_margin(24.0),
             )
             .show(ctx, |ui| {
@@ -1126,7 +1672,7 @@ impl Framecraft {
                         if let Some(pos)=response.interact_pointer_pos() {
                             let p=point(pos);
                             match self.tool {
-                                Tool::Select => { self.selected=editor::hit_test(&self.doc.as_ref().unwrap().annotations,p,6.0/scale); self.sync_selected(); }
+                                Tool::Select => { self.selected=editor::hit_test(&self.doc.as_ref().unwrap().annotations,p,6.0/scale); self.sync_selected(); if response.double_clicked() { self.begin_text_edit(); } }
                                 Tool::Text | Tool::Step => self.place_annotation(p),
                                 _ => {}
                             }
@@ -1140,7 +1686,7 @@ impl Framecraft {
                                 self.selected=editor::hit_test(&self.doc.as_ref().unwrap().annotations,p,6.0/scale);
                                 self.sync_selected();
                                 self.moving=self.selected.and_then(|i|self.doc.as_ref()?.annotations.get(i).cloned());
-                                if self.moving.is_some() {self.checkpoint();}
+                                if self.moving.is_some() {self.begin_move();}
                             } else {self.freehand.push(p);}
                         }
                     }
@@ -1160,7 +1706,7 @@ impl Framecraft {
                                 else if (start.x-end.x).abs()+(start.y-end.y).abs()>3.0 {self.commit(start,end);}
                             }
                         }
-                        if response.drag_stopped() {self.drag=None;self.moving=None;}
+                        if response.drag_stopped() {self.drag=None;if self.moving.is_some(){self.finish_move();}}
                     }
                     if !ctx.input(|i| i.pointer.any_down()) {
                         self.drag = None;
@@ -1238,27 +1784,54 @@ impl Framecraft {
             );
             ui.add_space(20.0);
             ui.horizontal(|ui| {
-                let gap = ((ui.available_width() - 470.0) / 2.0).max(0.0);
+                let gap = ((ui.available_width() - 518.0) / 2.0).max(0.0);
                 ui.add_space(gap);
                 ui.add_enabled_ui(self.capture_available(), |ui| {
-                    if ui.button("Capture Window…").clicked() {
+                    if ui_icons::sized_button(
+                        ui,
+                        "Capture Window…",
+                        Icon::Window,
+                        false,
+                        Some(166.0),
+                    )
+                    .clicked()
+                    {
                         self.capture(ctx, CaptureMode::Window);
                     }
-                    if ui.button("Capture Screen").clicked() {
+                    if ui_icons::sized_button(
+                        ui,
+                        "Capture Screen",
+                        Icon::Screen,
+                        false,
+                        Some(166.0),
+                    )
+                    .clicked()
+                    {
                         self.capture(ctx, CaptureMode::Screen);
                     }
                 });
                 if ui
-                    .add_enabled(
-                        self.editor_mutation_allowed(),
-                        egui::Button::new("Open Image…"),
-                    )
+                    .add_enabled_ui(self.editor_mutation_allowed(), |ui| {
+                        ui_icons::sized_button(ui, "Open Image…", Icon::Folder, false, Some(166.0))
+                    })
+                    .inner
                     .clicked()
                 {
                     self.open(ctx);
                 }
             });
-            ui.add_space(26.0);
+            ui.add_space(22.0);
+            if self.quick_settings.setup_complete {
+                ui.label(
+                    self.quick_shortcut_state
+                        .description(&self.quick_settings.shortcut_label()),
+                );
+            } else if ui_icons::button(ui, "Set up shortcuts & saving", Icon::Settings, false)
+                .clicked()
+            {
+                self.open_setup();
+            }
+            ui.add_space(12.0);
             ui.label(
                 RichText::new("Also available from the Framecraft icon in your Mac’s menu bar.")
                     .color(MUTED),
@@ -1283,7 +1856,9 @@ impl Framecraft {
         });
     }
     fn commit(&mut self, from: Point, to: Point) {
-        if self.tool == Tool::Select
+        if (self.tool == Tool::Pixelate
+            && ((from.x - to.x).abs() < 2.0 || (from.y - to.y).abs() < 2.0))
+            || self.tool == Tool::Select
             || (self.tool != Tool::Arrow
                 && ((from.x - to.x).abs() < 1.0 || (from.y - to.y).abs() < 1.0))
         {
@@ -1307,9 +1882,18 @@ impl Framecraft {
             }),
             Tool::Redact => doc.annotations.push(Annotation::Redact { rect }),
             Tool::Crop => doc.crop = Some(rect),
+            Tool::Pixelate => doc.annotations.push(Annotation::Pixelate {
+                rect,
+                block_size: self.pixelate_block,
+            }),
             Tool::Highlight => doc.annotations.push(Annotation::Highlight {
                 rect,
-                colour: [colour[0], colour[1], colour[2], 80],
+                colour: [
+                    self.highlight_colour[0],
+                    self.highlight_colour[1],
+                    self.highlight_colour[2],
+                    80,
+                ],
             }),
             Tool::Select | Tool::Pen | Tool::Text | Tool::Step => {}
         }
@@ -1384,7 +1968,7 @@ impl Framecraft {
         let p = ui.painter_at(canvas);
         let scale = canvas.width() / self.doc.as_ref().unwrap().source.width() as f32;
         match a {
-            Annotation::Text { .. } | Annotation::Step { .. } => {} // Composited by the shared raster renderer.
+            Annotation::Text { .. } | Annotation::Step { .. } | Annotation::Pixelate { .. } => {} // Composited by the shared raster renderer.
             Annotation::Highlight { rect, colour } => {
                 p.rect_filled(
                     self.map_rect(canvas, *rect),
@@ -1463,7 +2047,7 @@ impl Framecraft {
                 width: self.stroke,
             },
             Tool::Highlight => {
-                let c = self.colour.to_srgba_unmultiplied();
+                let c = self.highlight_colour;
                 Annotation::Highlight {
                     rect: pixel_rect(from, to),
                     colour: [c[0], c[1], c[2], 80],
@@ -1496,15 +2080,22 @@ impl Framecraft {
 
 impl Framecraft {
     fn request(&mut self, ctx: &egui::Context, action: Pending) {
-        if self.closing {
+        if self.setup.is_some() {
+            self.notify("Finish or cancel Capture setup first.", false);
+            return;
+        }
+        if self.closing || self.colour_dialog.is_some() || self.text_draft.is_some() {
             return;
         }
         if self.job.is_some() {
             self.notify("Wait for the current operation to finish.", true);
             return;
         }
-        if self.doc.is_some()
-            && self.revision != self.saved_revision
+        let replaces_document = !matches!(action, Pending::Capture(_))
+            || !self.quick_settings.capture_action().stays_in_source();
+        if replaces_document
+            && self.doc.is_some()
+            && (self.fresh_capture || self.revision != self.saved_revision)
             && self.selecting_display.is_none()
         {
             self.pending = Some(action);
@@ -1527,6 +2118,8 @@ impl Framecraft {
                     Ok(Outcome::SessionLoaded(image, path, handle))
                 });
             }
+            Pending::CloseScreenshot => self.close_screenshot(),
+            Pending::EditLastCapture => self.open_last_capture(ctx),
             Pending::Quit => {
                 self.session.desktop_action(DesktopAction::Stop, ctx);
                 self.closing = true;
@@ -1540,12 +2133,8 @@ impl Framecraft {
         {
             match mark {
                 Annotation::Text {
-                    text,
-                    font_size,
-                    colour,
-                    ..
+                    font_size, colour, ..
                 } => {
-                    self.text_input = text.clone();
                     self.text_size = *font_size;
                     self.colour =
                         Color32::from_rgba_unmultiplied(colour[0], colour[1], colour[2], colour[3]);
@@ -1565,38 +2154,125 @@ impl Framecraft {
             }
         }
     }
-    fn place_annotation(&mut self, at: Point) {
-        if self.doc.is_none() {
+    fn begin_text_edit(&mut self) {
+        if !self.editor_mutation_allowed() {
             return;
         }
-        let colour = self.colour.to_srgba_unmultiplied();
-        let mark = match self.tool {
-            Tool::Text if !self.text_input.trim().is_empty() => Annotation::Text {
-                position: at,
-                text: self.text_input.clone(),
-                font_size: self.text_size,
+        if let Some((
+            index,
+            Annotation::Text {
+                position,
+                text,
+                font_size,
                 colour,
-                background: Some([17, 22, 29, 235]),
+                background,
             },
-            Tool::Step => Annotation::Step {
-                center: at,
-                number: self.step_number,
-                radius: self.text_size.max(12.0),
-                colour,
-                text_colour: [17, 22, 29, 255],
-            },
-            _ => {
-                self.notify("Enter a text label, then click the image.", false);
-                return;
+        )) = self
+            .selected
+            .and_then(|i| Some((i, self.doc.as_ref()?.annotations.get(i)?)))
+        {
+            self.text_draft = Some(TextDraft {
+                index: Some(index),
+                position: *position,
+                text: text.clone(),
+                size: *font_size,
+                colour: Color32::from_rgba_unmultiplied(colour[0], colour[1], colour[2], colour[3]),
+                background: *background,
+                focus: true,
+            });
+        }
+    }
+    fn cancel_text_draft(&mut self) {
+        self.text_draft = None;
+        self.notify(
+            "Text changes cancelled. Your screenshot is unchanged.",
+            false,
+        );
+    }
+    fn commit_text_draft(&mut self) -> bool {
+        let Some(draft) = &self.text_draft else {
+            return false;
+        };
+        if let Some(error) = draft.validation_error() {
+            self.notify(error, true);
+            return false;
+        }
+        let mark = Annotation::Text {
+            position: draft.position,
+            text: draft.text.clone(),
+            font_size: draft.size,
+            colour: draft.colour.to_srgba_unmultiplied(),
+            background: draft.background,
+        };
+        let index = draft.index;
+        let Some(doc) = &self.doc else {
+            return false;
+        };
+        if let Some(index) = index {
+            if !matches!(doc.annotations.get(index), Some(Annotation::Text { .. })) {
+                return false;
             }
+            if doc.annotations.get(index) == Some(&mark) {
+                self.text_draft = None;
+                self.notify("Text is unchanged.", false);
+                return true;
+            }
+        }
+        self.checkpoint();
+        let doc = self.doc.as_mut().unwrap();
+        let selected = match index {
+            Some(index) => {
+                doc.annotations[index] = mark;
+                index
+            }
+            None => {
+                doc.annotations.push(mark);
+                doc.annotations.len() - 1
+            }
+        };
+        self.selected = Some(selected);
+        self.text_draft = None;
+        self.tool = Tool::Select;
+        self.changed();
+        self.sync_selected();
+        self.notify(
+            "Text applied. Double-click the label to edit it again; save the screenshot when ready.",
+            false,
+        );
+        true
+    }
+    fn place_annotation(&mut self, at: Point) {
+        if self.doc.is_none() || !self.editor_mutation_allowed() {
+            return;
+        }
+        if self.tool == Tool::Text {
+            self.selected = None;
+            self.text_draft = Some(TextDraft {
+                index: None,
+                position: at,
+                text: String::new(),
+                size: self.text_size,
+                colour: Color32::WHITE,
+                background: Some([17, 22, 29, 235]),
+                focus: true,
+            });
+            return;
+        }
+        if self.tool != Tool::Step {
+            return;
+        }
+        let mark = Annotation::Step {
+            center: at,
+            number: self.step_number,
+            radius: self.text_size.max(12.0),
+            colour: self.colour.to_srgba_unmultiplied(),
+            text_colour: [17, 22, 29, 255],
         };
         self.checkpoint();
         let doc = self.doc.as_mut().unwrap();
         doc.annotations.push(mark);
         self.selected = Some(doc.annotations.len() - 1);
-        if self.tool == Tool::Step {
-            self.step_number = (self.step_number + 1).min(9999);
-        }
+        self.step_number = (self.step_number + 1).min(9999);
         self.changed();
     }
     fn delete_selected(&mut self) {
@@ -1636,51 +2312,253 @@ impl Framecraft {
             }
         }
     }
-    fn annotation_controls(&mut self, ui: &mut egui::Ui) {
-        if matches!(self.tool, Tool::Text | Tool::Step) || self.selected.is_some() {
-            ui.label("Label / step properties");
-            ui.add(
-                egui::TextEdit::multiline(&mut self.text_input)
-                    .desired_rows(2)
-                    .char_limit(2048)
-                    .hint_text("Text label"),
+    fn property_controls(&mut self, ui: &mut egui::Ui) {
+        let selected = self
+            .selected
+            .and_then(|i| self.doc.as_ref()?.annotations.get(i));
+        if self.tool == Tool::Text || matches!(selected, Some(Annotation::Text { .. })) {
+            return; // Text has its own labelled editor rather than unrelated mark controls.
+        }
+        let highlight = matches!(selected, Some(Annotation::Highlight { .. }))
+            || (selected.is_none() && self.tool == Tool::Highlight);
+        let pixelate = matches!(selected, Some(Annotation::Pixelate { .. }))
+            || (selected.is_none() && self.tool == Tool::Pixelate);
+        section(
+            ui,
+            if self.selected.is_some() {
+                "Selected mark"
+            } else {
+                "Next tool"
+            },
+        );
+        if highlight {
+            ui.heading(if self.selected.is_some() {
+                "Selected highlight"
+            } else {
+                "Next highlight"
+            });
+            ui.label("Highlight colour");
+            ui.horizontal_wrapped(|ui| {
+                for (name, rgb) in [
+                    ("Yellow", [255, 212, 71]),
+                    ("Green", [135, 217, 137]),
+                    ("Cyan", [112, 213, 228]),
+                    ("Blue", [131, 169, 250]),
+                    ("Pink", [239, 152, 190]),
+                    ("Orange", [244, 174, 107]),
+                ] {
+                    let button = egui::Button::new(name)
+                        .fill(Color32::from_rgb(rgb[0], rgb[1], rgb[2]))
+                        .selected(self.highlight_value() == rgb);
+                    let response = ui.add(button);
+                    response.widget_info(|| {
+                        egui::WidgetInfo::selected(
+                            egui::WidgetType::Button,
+                            ui.is_enabled(),
+                            self.highlight_value() == rgb,
+                            name,
+                        )
+                    });
+                    if response.clicked() {
+                        self.set_highlight_colour(rgb);
+                    }
+                }
+            });
+            let custom = ui.button("Custom colour…");
+            if custom.clicked() {
+                self.colour_return = Some(custom.id);
+                self.begin_colour();
+            }
+            ui.label(
+                RichText::new("Highlights stay translucent.")
+                    .small()
+                    .color(MUTED),
             );
+        } else if pixelate {
+            ui.heading(if self.selected.is_some() {
+                "Selected pixelation"
+            } else {
+                "Next pixelation"
+            });
+            let mut value = self.block_value();
+            let slider = ui.add(
+                egui::Slider::new(&mut value, 2..=128)
+                    .text("Block size")
+                    .show_value(false),
+            );
+            if slider.changed() {
+                self.preview_block(value);
+            }
+            if slider.drag_stopped() || (slider.changed() && !slider.dragged()) {
+                self.finish_block(true);
+            }
+            let id = ui.make_persistent_id("pixelation-number");
+            if !ui.memory(|m| m.has_focus(id)) && self.property_block_before.is_none() {
+                self.block_input = self.block_value().to_string();
+            }
+            let block_label = ui.label("Block size in original-image pixels");
+            let input = ui
+                .add(
+                    egui::TextEdit::singleline(&mut self.block_input)
+                        .id(id)
+                        .desired_width(90.)
+                        .char_limit(4),
+                )
+                .labelled_by(block_label.id);
+            if input.gained_focus() {
+                self.begin_block();
+            }
+            if input.changed() {
+                if let Some(value) = self.parse_block_input() {
+                    self.preview_block(value);
+                }
+            }
+            let escape = (input.has_focus() || input.lost_focus())
+                && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
+            let enter = (input.has_focus() || input.lost_focus())
+                && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Enter));
+            if escape {
+                self.finish_block(false);
+                self.block_error = None;
+                ui.memory_mut(|m| m.surrender_focus(id));
+            } else if enter {
+                if self.parse_block_input().is_some() {
+                    self.finish_block(true);
+                    ui.memory_mut(|m| m.surrender_focus(id));
+                } else {
+                    input.request_focus();
+                }
+            } else if input.lost_focus() {
+                let valid = self.parse_block_input().is_some();
+                self.finish_block(valid);
+            }
+            if let Some(error) = &self.block_error {
+                ui.colored_label(Color32::from_rgb(173, 52, 52), error);
+            }
+            ui.label("Original-image pixels. Larger blocks hide more detail.");
+            ui.label(
+                RichText::new("Use Redact for a solid cover. The original is retained.")
+                    .small()
+                    .color(MUTED),
+            );
+        } else if matches!(self.tool, Tool::Arrow | Tool::Box | Tool::Pen) {
+            ui.horizontal(|ui| {
+                ui.label("Colour");
+                ui.color_edit_button_srgba(&mut self.colour);
+            });
+            if matches!(self.tool, Tool::Arrow | Tool::Box | Tool::Pen) {
+                ui.add(egui::Slider::new(&mut self.stroke, 2.0..=16.0).text("Weight"));
+            }
+        } else {
+            ui.heading(if self.tool == Tool::Redact {
+                "Redact"
+            } else {
+                "Screenshot"
+            });
+            ui.label("Select a mark to adjust it, or choose a tool.");
+        }
+        if self.selected.is_some() {
+            ui.label(
+                RichText::new("Edits change this mark.")
+                    .small()
+                    .color(MUTED),
+            );
+        } else {
+            ui.label(
+                RichText::new("Properties apply to the next mark you draw.")
+                    .small()
+                    .color(MUTED),
+            );
+        }
+        if matches!(self.tool, Tool::Highlight | Tool::Pixelate | Tool::Redact)
+            && ui
+                .button("Add centred region")
+                .on_hover_text(
+                    "Keyboard alternative to drawing; use Select and arrow keys to move it.",
+                )
+                .clicked()
+        {
+            if let Some(d) = &self.doc {
+                let w = d.source.width() as f32;
+                let h = d.source.height() as f32;
+                let count = self.doc.as_ref().unwrap().annotations.len();
+                self.commit(
+                    Point {
+                        x: w * 0.3,
+                        y: h * 0.4,
+                    },
+                    Point {
+                        x: w * 0.7,
+                        y: h * 0.6,
+                    },
+                );
+                if self.doc.as_ref().unwrap().annotations.len() > count {
+                    self.selected = Some(count);
+                    self.tool = Tool::Select;
+                } else {
+                    self.notify("Choose a region at least 2 by 2 pixels.", false);
+                }
+            }
+        }
+    }
+    fn annotation_controls(&mut self, ui: &mut egui::Ui) {
+        let selected_text = self.selected.is_some_and(|i| {
+            matches!(
+                self.doc.as_ref().and_then(|d| d.annotations.get(i)),
+                Some(Annotation::Text { .. })
+            )
+        });
+        let selected_step = self.selected.is_some_and(|i| {
+            matches!(
+                self.doc.as_ref().and_then(|d| d.annotations.get(i)),
+                Some(Annotation::Step { .. })
+            )
+        });
+        if selected_text {
+            ui.heading("Text label");
+            ui.label("Edit the wording, size and colour together.");
+            if ui.button("Edit text…").clicked() {
+                self.begin_text_edit();
+            }
+            ui.label("You can also double-click a label on the image.");
+        } else if self.tool == Tool::Text {
+            ui.heading("Add text");
+            ui.label("Click where the label should go, then type your text.");
+            if ui.button("Add text at centre…").clicked() {
+                if let Some(doc) = &self.doc {
+                    self.place_annotation(Point {
+                        x: doc.source.width() as f32 * 0.5,
+                        y: doc.source.height() as f32 * 0.5,
+                    });
+                }
+            }
+        }
+        if self.tool == Tool::Step || selected_step {
+            ui.label("Step properties");
             ui.add(egui::Slider::new(&mut self.text_size, 8.0..=128.0).text("Size"));
             ui.add(
                 egui::DragValue::new(&mut self.step_number)
                     .range(1..=9999)
                     .prefix("Step "),
             );
-            if self.selected.is_some() && ui.button("Apply label / step properties").clicked() {
+            ui.horizontal(|ui| {
+                ui.label("Step colour");
+                ui.color_edit_button_srgba(&mut self.colour);
+            });
+            if selected_step && ui.button("Apply step changes").clicked() {
                 self.checkpoint();
-                let colour = self.colour.to_srgba_unmultiplied();
-                if let Some(mark) = self
+                if let Some(Annotation::Step {
+                    number,
+                    radius,
+                    colour,
+                    ..
+                }) = self
                     .selected
                     .and_then(|i| self.doc.as_mut()?.annotations.get_mut(i))
                 {
-                    match mark {
-                        Annotation::Text {
-                            text,
-                            font_size,
-                            colour: c,
-                            ..
-                        } => {
-                            *text = self.text_input.clone();
-                            *font_size = self.text_size;
-                            *c = colour;
-                        }
-                        Annotation::Step {
-                            number,
-                            radius,
-                            colour: c,
-                            ..
-                        } => {
-                            *number = self.step_number;
-                            *radius = self.text_size.max(8.0);
-                            *c = colour;
-                        }
-                        _ => {}
-                    }
+                    *number = self.step_number;
+                    *radius = self.text_size.max(8.0);
+                    *colour = self.colour.to_srgba_unmultiplied();
                 }
                 self.changed();
             }
@@ -1704,6 +2582,7 @@ impl Framecraft {
                                 Annotation::Highlight { .. } => "Highlight",
                                 Annotation::Freehand { .. } => "Drawing",
                                 Annotation::Redact { .. } => "Redaction",
+                                Annotation::Pixelate { .. } => "Pixelation",
                             }
                         )
                     })
@@ -1711,7 +2590,9 @@ impl Framecraft {
             })
             .unwrap_or_default();
         if !names.is_empty() {
-            egui::ComboBox::from_label("Select mark")
+            let mark_label = ui.label("Select mark");
+            let mark_combo = egui::ComboBox::from_id_salt("selected-annotation")
+                .width(ui.available_width() - 8.0)
                 .selected_text(
                     self.selected
                         .and_then(|i| names.get(i))
@@ -1727,7 +2608,16 @@ impl Framecraft {
                             self.sync_selected();
                         }
                     }
-                });
+                })
+                .response
+                .labelled_by(mark_label.id);
+            mark_combo.widget_info(|| {
+                egui::WidgetInfo::labeled(
+                    egui::WidgetType::ComboBox,
+                    ui.is_enabled(),
+                    "Select mark",
+                )
+            });
             if ui
                 .add_enabled(
                     self.selected.is_some(),
@@ -1737,15 +2627,24 @@ impl Framecraft {
             {
                 self.delete_selected();
             }
-            ui.horizontal(|ui| {
-                for (name, delta) in [
+            egui::Grid::new("nudge-mark").num_columns(2).show(ui, |ui| {
+                for (index, (name, delta)) in [
                     ("Left", Point { x: -1.0, y: 0.0 }),
                     ("Right", Point { x: 1.0, y: 0.0 }),
                     ("Up", Point { x: 0.0, y: -1.0 }),
                     ("Down", Point { x: 0.0, y: 1.0 }),
-                ] {
-                    if ui.small_button(name).clicked() {
+                ]
+                .into_iter()
+                .enumerate()
+                {
+                    if ui
+                        .add_sized([86.0, 30.0], egui::Button::new(name))
+                        .clicked()
+                    {
                         self.move_selected(delta);
+                    }
+                    if index % 2 == 1 {
+                        ui.end_row();
                     }
                 }
             });
@@ -1893,20 +2792,64 @@ impl Framecraft {
             self.desktop_attempted = true;
             let wake = ctx.clone();
             match DesktopControls::new(move || wake.request_repaint()) {
-                Ok(controls) => self.desktop = Some(controls),
-                Err(error) => self.notify(error, true),
+                Ok(mut controls) => {
+                    if self.quick_settings.setup_complete && self.quick_settings.shortcut_enabled {
+                        match controls.configure_quick_capture(Some(&self.quick_settings.shortcut))
+                        {
+                            Ok(()) => self.quick_shortcut_state = QuickShortcutState::Active,
+                            Err(error) => {
+                                self.quick_shortcut_state = QuickShortcutState::Unavailable;
+                                self.notify(format!("Everyday shortcut unavailable: {error} Open Capture setup to choose another."), true);
+                            }
+                        }
+                    }
+                    controls.set_quick_shortcut_status(
+                        self.quick_shortcut_state,
+                        &self.quick_settings.shortcut_label(),
+                    );
+                    self.desktop = Some(controls);
+                }
+                Err(error) => {
+                    if self.quick_settings.setup_complete && self.quick_settings.shortcut_enabled {
+                        self.quick_shortcut_state = QuickShortcutState::Unavailable;
+                    }
+                    self.notify(error, true);
+                }
             }
         }
         let capture_available = self.capture_available();
-        let actions = if let Some(controls) = &mut self.desktop {
-            let actions = controls.poll();
+        if !capture_available {
+            self.thumbnail.hide();
+        }
+        let close_available = self.doc.is_some() && self.editor_mutation_allowed();
+        let mut actions = if let Some(controls) = &mut self.desktop {
+            let actions = controls.poll_with_capture_hide(|| self.thumbnail.hide());
+            // Carbon owns the active binding, so recording the same chord
+            // cannot rely on a second key-down arriving in the egui window.
+            if controls.suppressed_quick_press() && ctx.input(|i| i.focused) {
+                if let Some(draft) = &mut self.setup {
+                    draft.offer_registered_stroke(&self.quick_settings);
+                }
+            }
             let (state, count, source) = self.session.desktop_status();
             controls.update(state, count, &source);
             controls.set_capture_available(capture_available);
+            controls.set_close_available(close_available);
+            controls.set_last_capture(
+                self.last_capture.as_ref().map(handoff::LastCapture::status),
+                capture_available,
+            );
+            controls.set_capture_cancellable(self.capture_cancel.is_some());
             actions
         } else {
             vec![]
         };
+        if let Some(action) = self.thumbnail.take_action() {
+            actions.push(match action {
+                ThumbnailAction::Edit => DesktopAction::EditLastCapture,
+                ThumbnailAction::Clear => DesktopAction::ClearLastCapture,
+            });
+        }
         for action in actions {
             if self.closing {
                 continue;
@@ -1916,6 +2859,31 @@ impl Framecraft {
                 continue;
             }
             match action {
+                DesktopAction::EditLastCapture => {
+                    self.edit_last_capture(ctx);
+                    continue;
+                }
+                DesktopAction::ClearLastCapture => {
+                    self.clear_last_capture();
+                    continue;
+                }
+                DesktopAction::RetryLastOutput => {
+                    self.retry_last_output(ctx);
+                    continue;
+                }
+                DesktopAction::CloseScreenshot => {
+                    if self.doc.is_some() && self.editor_mutation_allowed() {
+                        self.request(ctx, Pending::CloseScreenshot);
+                    }
+                    continue;
+                }
+                DesktopAction::CancelCapture => {
+                    if let Some(flag) = &self.capture_cancel {
+                        flag.store(true, Ordering::Release);
+                        self.notify("Cancelling capture…", false);
+                    }
+                    continue;
+                }
                 DesktopAction::CaptureArea => {
                     self.capture(ctx, CaptureMode::Area);
                     continue;
@@ -1930,7 +2898,7 @@ impl Framecraft {
                 }
                 DesktopAction::Settings => {
                     if self.pending.is_none() && !self.closing {
-                        self.open_settings();
+                        self.open_setup();
                     }
                     ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
                     ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(false));
@@ -1973,13 +2941,101 @@ impl Framecraft {
             self.shortcuts_registered = false;
         }
     }
+    fn text_dialog(&mut self, ctx: &egui::Context) {
+        let Some(draft) = &mut self.text_draft else {
+            return;
+        };
+        let editing = draft.index.is_some();
+        let mut open = true;
+        let mut apply = false;
+        let mut cancel = false;
+        egui::Window::new(if editing { "Edit text" } else { "Add text" })
+            .id(egui::Id::new("text-label-dialog"))
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .default_width(360.0)
+            .show(ctx, |ui| {
+                let label = ui.label("Text label");
+                let response = ui
+                    .add(
+                        egui::TextEdit::multiline(&mut draft.text)
+                            .id(egui::Id::new("text-label-input"))
+                            .desired_rows(4)
+                            .desired_width(f32::INFINITY)
+                            .char_limit(editor::MAX_TEXT_CHARS)
+                            .hint_text("Type your label here…"),
+                    )
+                    .labelled_by(label.id);
+                if draft.focus {
+                    response.request_focus();
+                    draft.focus = false;
+                }
+                ui.add(egui::Slider::new(&mut draft.size, 8.0..=128.0).text("Text size"));
+                ui.horizontal(|ui| {
+                    ui.label("Text colour");
+                    ui.color_edit_button_srgba(&mut draft.colour);
+                });
+                if let Some(error) = draft.validation_error() {
+                    ui.label(error);
+                }
+                ui.label("Return adds a new line. Escape cancels your changes.");
+                ui.horizontal(|ui| {
+                    apply = ui
+                        .add_enabled(
+                            draft.validation_error().is_none(),
+                            egui::Button::new(if editing { "Apply changes" } else { "Add text" }),
+                        )
+                        .clicked();
+                    cancel = ui.button("Cancel").clicked();
+                });
+            });
+        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
+            cancel = true;
+        }
+        if !open || cancel {
+            self.cancel_text_draft();
+        } else if apply {
+            self.commit_text_draft();
+        }
+    }
     fn dialogs(&mut self, ctx: &egui::Context, frame: &eframe::Frame) {
+        self.text_dialog(ctx);
+        if let Some((original, mut draft)) = self.colour_dialog.take() {
+            let mut finish = false;
+            let mut commit = false;
+            egui::Window::new("Highlight colour")
+                .collapsible(false)
+                .resizable(false)
+                .show(ctx, |ui| {
+                    ui.label("Preview the colour, then apply or cancel.");
+                    ui.color_edit_button_srgb(&mut draft);
+                    ui.horizontal(|ui| {
+                        if ui.button("Apply colour").clicked() {
+                            finish = true;
+                            commit = true;
+                        }
+                        if ui.button("Cancel").clicked() {
+                            finish = true;
+                        }
+                    });
+                });
+            if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
+                finish = true;
+            }
+            self.update_colour(original, draft, finish, commit);
+            if finish {
+                if let Some(id) = self.colour_return.take() {
+                    ctx.memory_mut(|m| m.request_focus(id));
+                }
+            }
+        }
         if self.pending.is_some() && !self.closing {
-            egui::Window::new("Keep your current edits?").collapsible(false).resizable(false).show(ctx,|ui| {
-                ui.label("Edits are held in memory. Save a flattened PNG before replacing this image or quitting.");
+            egui::Window::new("Save this screenshot before closing?").collapsible(false).resizable(false).show(ctx,|ui| {
+                ui.label("Copying does not save a file. Save a PNG, discard this unsaved result, or cancel to keep editing.");
                 ui.add_enabled_ui(self.job.is_none(),|ui| {ui.horizontal(|ui| {
                     if ui.button("Save PNG…").clicked() {self.continue_after_save=true;if self.editing_capture.is_some(){self.save_edited_copy(ctx);}else{self.export(ctx,false);}}
-                    if ui.button("Discard edits").clicked() {self.continue_after_save=false;self.saved_revision=self.revision;if let Some(action)=self.pending.take(){self.execute(ctx,action);}}
+                    if ui.button("Discard changes").clicked() {self.continue_after_save=false;if let Some(action)=self.pending.take(){self.execute(ctx,action);}}
                     if ui.button("Cancel").clicked() {self.pending=None;self.continue_after_save=false;}
                 });});
             });
@@ -2081,13 +3137,14 @@ impl Framecraft {
             }
         }
         if self.settings_open {
-            egui::Window::new("Keyboard Shortcuts")
+            egui::Window::new("Session & app shortcuts")
                 .anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
                 .collapsible(false).resizable(false).default_width(540.0)
                 .vscroll(true).max_height((ctx.screen_rect().height() - 90.0).max(240.0))
                 .show(ctx, |ui| {
                     ui.label("Command (⌘) and Option (⌥) are the keys beside the space bar.");
                     ui.label(RichText::new("You can always use the Capture Area button or menu bar icon.").color(MUTED));
+                    ui.label(self.quick_shortcut_state.description(&self.quick_settings.shortcut_label()));
                     ui.add_space(12.0);
                     ui.strong("Screenshot commands");
                     ui.label(RichText::new("While Framecraft is the active application").small().color(MUTED));
@@ -2102,9 +3159,9 @@ impl Framecraft {
                     if self.session.active() { ui.label("Stop the session before changing these shortcuts."); }
                     let draft = self.shortcut_draft.get_or_insert_with(|| self.shortcuts_settings.clone());
                     ui.add_enabled_ui(!self.session.active(), |ui| {
-                        shortcut_editor(ui, "Capture next frame", &mut draft.capture);
-                        shortcut_editor(ui, "Pause or resume", &mut draft.pause_resume);
-                        shortcut_editor(ui, "Stop collection", &mut draft.stop);
+                        shortcut_editor(ui, "Capture next frame", &mut draft.capture, 24);
+                        shortcut_editor(ui, "Pause or resume", &mut draft.pause_resume, 24);
+                        shortcut_editor(ui, "Stop collection", &mut draft.stop, 24);
                     });
                     if let Some(error) = &self.settings_error { ui.colored_label(Color32::from_rgb(177, 39, 35), error); }
                     ui.add_space(12.0);
@@ -2112,6 +3169,7 @@ impl Framecraft {
                         if ui.add_enabled(!self.session.active(), egui::Button::new("Save Shortcuts")).clicked() {
                             let candidate = self.shortcut_draft.as_ref().unwrap().clone();
                             let result = candidate.validate()
+                                .and_then(|_| if self.quick_settings.setup_complete && self.quick_settings.shortcut_enabled { self.quick_settings.validate(&candidate) } else { Ok(()) })
                                 .and_then(|_| self.desktop.as_mut().ok_or("Menu controls are unavailable. Close and reopen Framecraft.")?.configure_shortcuts(&candidate, true))
                                 .and_then(|_| candidate.save());
                             if let Some(controls) = &mut self.desktop { controls.clear_shortcuts(); }
@@ -2152,7 +3210,12 @@ fn install_mac_font(_ctx: &egui::Context) {
     }
 }
 
-fn shortcut_editor(ui: &mut egui::Ui, label: &str, value: &mut String) {
+pub(super) fn shortcut_editor(
+    ui: &mut egui::Ui,
+    label: &str,
+    value: &mut String,
+    last_function_key: u8,
+) {
     ui.push_id(label, |ui| {
         let Ok(mut parts) = framecraft::settings::ShortcutParts::parse(value) else {
             ui.label(format!(
@@ -2168,14 +3231,14 @@ fn shortcut_editor(ui: &mut egui::Ui, label: &str, value: &mut String) {
             ui.checkbox(&mut parts.option, "Option");
             ui.checkbox(&mut parts.control, "Control");
             ui.checkbox(&mut parts.shift, "Shift");
-            egui::ComboBox::from_id_salt("key")
+            egui::ComboBox::from_label("Key")
                 .selected_text(&parts.key)
                 .width(56.0)
                 .show_ui(ui, |ui| {
                     for key in ('A'..='Z')
                         .map(|c| c.to_string())
                         .chain((0..=9).map(|n| n.to_string()))
-                        .chain((1..=24).map(|n| format!("F{n}")))
+                        .chain((1..=last_function_key).map(|n| format!("F{n}")))
                     {
                         ui.selectable_value(&mut parts.key, key.clone(), key);
                     }
@@ -2264,8 +3327,15 @@ impl eframe::App for Framecraft {
             ctx.request_repaint_after(Duration::from_millis(100));
             return;
         }
+        if self.pending.is_some()
+            && self.job.is_none()
+            && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape))
+        {
+            self.pending = None;
+            self.continue_after_save = false;
+        }
         self.shortcuts(ctx);
-        if self.job.is_none() {
+        if self.editor_mutation_allowed() {
             let path = ctx.input(|i| i.raw.dropped_files.first().and_then(|f| f.path.clone()));
             if let Some(path) = path {
                 self.open_path(ctx, path);
@@ -2278,6 +3348,12 @@ impl eframe::App for Framecraft {
                 ui.horizontal_wrapped(|ui| {
                     if self.job.is_some() {
                         ui.spinner();
+                    }
+                    if self.offer_shortcut_try
+                        && self.editor_mutation_allowed()
+                        && ui.button("Try your shortcut").clicked()
+                    {
+                        self.rehearse_shortcut();
                     }
                     ui.label(RichText::new(&self.status).small().color(if self.error {
                         Color32::from_rgb(177, 39, 35)
@@ -2302,12 +3378,30 @@ impl eframe::App for Framecraft {
             }
         } else {
             if self.doc.is_some() {
+                self.toolrail(ctx);
                 self.sidebar(ctx);
             }
             self.canvas(ctx);
         }
         self.dialogs(ctx, frame);
+        if let Some(mut draft) = self.setup.take() {
+            match draft.show(ctx, &self.shortcuts_settings) {
+                SetupAction::Cancel => {}
+                SetupAction::Finish => {
+                    if let Err(error) = self.finish_setup(draft.settings.clone()) {
+                        draft.error = Some(error);
+                        self.setup = Some(draft);
+                    }
+                }
+                SetupAction::None => self.setup = Some(draft),
+            }
+        }
     }
+}
+
+fn icon_enabled(ui: &mut egui::Ui, enabled: bool, label: &str, icon: Icon) -> egui::Response {
+    ui.add_enabled_ui(enabled, |ui| ui_icons::button(ui, label, icon, false))
+        .inner
 }
 
 fn texture(ctx: &egui::Context, name: &str, pixels: &image::RgbaImage) -> egui::TextureHandle {
@@ -2382,6 +3476,496 @@ fn save_edit(original: &std::path::Path, image: &image::RgbaImage) -> Result<Pat
 mod tests {
     use super::*;
 
+    fn edited_fixture(tool: Tool) -> (egui::Context, Framecraft) {
+        let ctx = egui::Context::default();
+        let mut app = Framecraft::with_context(&ctx, true);
+        app.tool = tool;
+        app.commit(Point { x: 10., y: 10. }, Point { x: 100., y: 80. });
+        app.selected = Some(0);
+        (ctx, app)
+    }
+    #[test]
+    fn dirty_session_header_actions_fit_minimum_window() {
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        let mut app = Framecraft::with_context(&ctx, true);
+        app.editing_capture = Some(PathBuf::from("/tmp/synthetic-session-frame.png"));
+        app.changed();
+        let output = ctx.run(
+            egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(
+                    Pos2::ZERO,
+                    Vec2::new(900.0, 620.0),
+                )),
+                ..Default::default()
+            },
+            |ctx| app.header(ctx),
+        );
+        let update = output.platform_output.accesskit_update.unwrap();
+        for name in [
+            "Open Image…",
+            "Close screenshot",
+            "Copy image",
+            "Save PNG…",
+            "Save Edited Copy",
+            "More Actions",
+        ] {
+            let node = update
+                .nodes
+                .iter()
+                .find(|(_, node)| node.label() == Some(name))
+                .unwrap_or_else(|| panic!("Missing action: {name}"));
+            let bounds = node.1.bounds().unwrap();
+            assert!(
+                bounds.x0 >= 0.0 && bounds.x1 <= 900.0 && bounds.y0 >= 0.0 && bounds.y1 <= 620.0,
+                "{name} outside minimum window: {bounds:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn setup_blocks_capture_import_and_document_replacement() {
+        let ctx = egui::Context::default();
+        let mut app = Framecraft::with_context(&ctx, true);
+        let revision = app.revision;
+        app.open_setup();
+        assert!(app.setup.is_some());
+        assert!(!app.capture_available());
+        assert!(!app.editor_mutation_allowed());
+        app.request(&ctx, Pending::CloseScreenshot);
+        assert!(app.doc.is_some());
+        assert!(app.pending.is_none());
+        app.open_settings();
+        assert!(!app.settings_open);
+        app.setup = None;
+        assert_eq!(app.revision, revision);
+        assert!(app.editor_mutation_allowed());
+    }
+
+    #[test]
+    fn auto_save_failure_retains_pixels_as_unsaved_for_manual_recovery() {
+        let ctx = egui::Context::default();
+        let mut app = Framecraft::with_context(&ctx, false);
+        let pixels = image::RgbaImage::from_pixel(8, 8, image::Rgba([1, 2, 3, 255]));
+        let (tx, rx) = mpsc::channel();
+        app.job = Some(Job { rx });
+        tx.send(Ok(Outcome::AutoSaved(
+            pixels.clone(),
+            Err("Disk full".into()),
+        )))
+        .unwrap();
+        app.poll(&ctx);
+        assert_eq!(app.doc.as_ref().unwrap().source, pixels);
+        assert!(app.fresh_capture);
+        assert!(app.error);
+        assert!(app.status.contains("Save PNG"));
+        app.request(&ctx, Pending::CloseScreenshot);
+        assert!(app.pending.is_some());
+        assert!(app.doc.is_some());
+    }
+
+    #[test]
+    fn auto_saved_capture_is_clean_but_subsequent_edits_are_unsaved() {
+        let ctx = egui::Context::default();
+        let mut app = Framecraft::with_context(&ctx, false);
+        let (tx, rx) = mpsc::channel();
+        app.job = Some(Job { rx });
+        tx.send(Ok(Outcome::AutoSaved(
+            image::RgbaImage::new(8, 8),
+            Ok(PathBuf::from("/tmp/Screenshot-20261108-142233.png")),
+        )))
+        .unwrap();
+        app.poll(&ctx);
+        assert!(!app.fresh_capture);
+        assert_eq!(app.saved_revision, app.revision);
+        assert!(app.status.starts_with("Saved /tmp/"));
+        app.changed();
+        app.request(&ctx, Pending::CloseScreenshot);
+        assert!(app.pending.is_some());
+    }
+
+    #[test]
+    fn text_click_starts_a_draft_without_creating_an_invisible_mark() {
+        let ctx = egui::Context::default();
+        let mut app = Framecraft::with_context(&ctx, true);
+        app.tool = Tool::Text;
+        let revision = app.revision;
+        app.place_annotation(Point { x: 50.0, y: 50.0 });
+        assert!(app.text_draft.is_some());
+        assert!(app.doc.as_ref().unwrap().annotations.is_empty());
+        assert_eq!(app.revision, revision);
+        assert!(!app.editor_mutation_allowed());
+        assert!(!app.commit_text_draft());
+        app.text_draft.as_mut().unwrap().text = "Review this\nNext step".into();
+        assert!(app.commit_text_draft());
+        assert_eq!(app.undo.len(), 1);
+        assert_eq!(app.doc.as_ref().unwrap().annotations.len(), 1);
+        assert!(app.text_draft.is_none());
+        app.undo(false);
+        assert!(app.doc.as_ref().unwrap().annotations.is_empty());
+        app.undo(true);
+        assert!(
+            matches!(&app.doc.as_ref().unwrap().annotations[0], Annotation::Text { text, position, .. } if text == "Review this\nNext step" && position.x == 50.0)
+        );
+    }
+
+    #[test]
+    fn text_edit_commits_atomically_and_cancel_preserves_pixels() {
+        let ctx = egui::Context::default();
+        let mut app = Framecraft::with_context(&ctx, true);
+        app.tool = Tool::Text;
+        app.place_annotation(Point { x: 50.0, y: 50.0 });
+        app.text_draft.as_mut().unwrap().text = "Original".into();
+        assert!(app.commit_text_draft());
+        let original = app.doc.as_ref().unwrap().annotations.clone();
+        let revision = app.revision;
+        app.begin_text_edit();
+        let draft = app.text_draft.as_mut().unwrap();
+        draft.text = "Discard this".into();
+        draft.size = 40.0;
+        draft.colour = Color32::RED;
+        app.cancel_text_draft();
+        assert_eq!(app.doc.as_ref().unwrap().annotations, original);
+        assert_eq!(app.revision, revision);
+        assert_eq!(app.undo.len(), 1);
+        app.begin_text_edit();
+        let draft = app.text_draft.as_mut().unwrap();
+        draft.text = "Changed".into();
+        draft.size = 40.0;
+        draft.colour = Color32::RED;
+        assert!(app.commit_text_draft());
+        assert_eq!(app.undo.len(), 2);
+        assert!(
+            matches!(&app.doc.as_ref().unwrap().annotations[0], Annotation::Text { text, font_size, colour, .. } if text == "Changed" && *font_size == 40.0 && *colour == [255, 0, 0, 255])
+        );
+        app.undo(false);
+        assert_eq!(app.doc.as_ref().unwrap().annotations, original);
+        app.undo(true);
+        assert!(
+            matches!(&app.doc.as_ref().unwrap().annotations[0], Annotation::Text { text, .. } if text == "Changed")
+        );
+    }
+
+    #[test]
+    fn text_draft_rejects_invalid_content_and_protects_against_other_commands() {
+        let ctx = egui::Context::default();
+        let mut app = Framecraft::with_context(&ctx, true);
+        app.tool = Tool::Text;
+        app.place_annotation(Point { x: 50.0, y: 50.0 });
+        for value in [
+            " ".to_owned(),
+            "a\n".repeat(editor::MAX_TEXT_LINES),
+            "bad\tcontrol".into(),
+            "a".repeat(editor::MAX_TEXT_CHARS + 1),
+        ] {
+            app.text_draft.as_mut().unwrap().text = value;
+            assert!(!app.commit_text_draft());
+            assert!(app.doc.as_ref().unwrap().annotations.is_empty());
+            assert!(app.undo.is_empty());
+        }
+        app.request(&ctx, Pending::Quit);
+        app.open_settings();
+        assert!(!app.closing);
+        assert!(app.pending.is_none());
+        assert!(!app.settings_open);
+        assert!(!app.capture_available());
+        app.load(ctx, image::RgbaImage::new(20, 20), "next".into());
+        assert!(app.text_draft.is_none());
+    }
+
+    #[test]
+    fn text_dialog_focus_accepts_typing_and_escape_discards_only_draft() {
+        let ctx = egui::Context::default();
+        let mut app = Framecraft::with_context(&ctx, true);
+        app.tool = Tool::Text;
+        app.place_annotation(Point { x: 50.0, y: 50.0 });
+        let revision = app.revision;
+        let _ = ctx.run(egui::RawInput::default(), |ctx| app.text_dialog(ctx));
+        assert!(ctx.memory(|m| m.has_focus(egui::Id::new("text-label-input"))));
+        let _ = ctx.run(
+            egui::RawInput {
+                events: vec![egui::Event::Text("A typed label".into())],
+                ..Default::default()
+            },
+            |ctx| {
+                app.shortcuts(ctx);
+                app.text_dialog(ctx);
+            },
+        );
+        assert_eq!(app.text_draft.as_ref().unwrap().text, "A typed label");
+        let _ = ctx.run(
+            egui::RawInput {
+                events: vec![egui::Event::Key {
+                    key: egui::Key::Escape,
+                    physical_key: None,
+                    pressed: true,
+                    repeat: false,
+                    modifiers: egui::Modifiers::NONE,
+                }],
+                ..Default::default()
+            },
+            |ctx| {
+                app.shortcuts(ctx);
+                app.text_dialog(ctx);
+            },
+        );
+        assert!(app.text_draft.is_none());
+        assert!(app.doc.as_ref().unwrap().annotations.is_empty());
+        assert!(app.undo.is_empty());
+        assert_eq!(app.revision, revision);
+    }
+
+    #[test]
+    fn unchanged_text_apply_does_not_dirty_a_saved_document() {
+        let ctx = egui::Context::default();
+        let mut app = Framecraft::with_context(&ctx, true);
+        app.tool = Tool::Text;
+        app.place_annotation(Point { x: 50.0, y: 50.0 });
+        app.text_draft.as_mut().unwrap().text = "Original".into();
+        app.commit_text_draft();
+        app.saved_revision = app.revision;
+        let revision = app.revision;
+        app.begin_text_edit();
+        assert!(app.commit_text_draft());
+        assert_eq!(app.revision, revision);
+        assert_eq!(app.saved_revision, revision);
+        assert_eq!(app.undo.len(), 1);
+    }
+
+    #[test]
+    fn missing_permission_preserves_edits_and_opens_recovery_without_a_capture_job() {
+        let (_, mut app) = edited_fixture(Tool::Highlight);
+        let revision = app.revision;
+        let pixels = editor::render(app.doc.as_ref().unwrap()).unwrap();
+        for status in [
+            capture::PermissionStatus::NotGranted,
+            capture::PermissionStatus::Unknown,
+        ] {
+            assert!(!app.check_screen_access(status));
+            assert!(app.screen_access_open);
+            assert!(app.job.is_none());
+            assert!(app.capture_cancel.is_none());
+            assert!(app.pending.is_none());
+            assert_eq!(app.revision, revision);
+            assert_eq!(editor::render(app.doc.as_ref().unwrap()).unwrap(), pixels);
+        }
+        assert!(app.check_screen_access(capture::PermissionStatus::Granted));
+        assert!(
+            app.job.is_none(),
+            "permission checks never auto-start capture"
+        );
+    }
+    fn complete(app: &mut Framecraft, ctx: &egui::Context, result: Result<Outcome, String>) {
+        let (tx, rx) = mpsc::channel();
+        app.job = Some(Job { rx });
+        tx.send(result).unwrap();
+        app.poll(ctx);
+    }
+    #[test]
+    fn replacement_clears_abandoned_transaction_state() {
+        let (ctx, mut app) = edited_fixture(Tool::Pixelate);
+        app.begin_block();
+        app.block_error = Some("invalid".into());
+        app.load(ctx, image::RgbaImage::new(20, 20), "next".into());
+        assert!(app.property_block_before.is_none());
+        assert!(app.property_before.is_none());
+        assert!(app.block_error.is_none());
+        assert!(app.gesture_before.is_none());
+    }
+
+    #[test]
+    fn failed_and_stale_save_cannot_close_or_acknowledge_newer_work() {
+        let (ctx, mut app) = edited_fixture(Tool::Highlight);
+        app.pending = Some(Pending::CloseScreenshot);
+        app.continue_after_save = true;
+        complete(&mut app, &ctx, Err("disk full".into()));
+        assert!(app.doc.is_some());
+        assert!(app.pending.is_some());
+        assert!(!app.continue_after_save);
+        assert!(app.error);
+        let stale = app.revision;
+        app.changed();
+        app.continue_after_save = true;
+        complete(
+            &mut app,
+            &ctx,
+            Ok(Outcome::Exported(PathBuf::from("saved.png"), stale)),
+        );
+        assert!(app.doc.is_some());
+        assert_ne!(app.saved_revision, app.revision);
+        let current = app.revision;
+        complete(
+            &mut app,
+            &ctx,
+            Ok(Outcome::Exported(PathBuf::from("saved.png"), current)),
+        );
+        assert!(app.doc.is_none());
+        assert!(!app.closing);
+    }
+    #[test]
+    fn colour_preview_cancel_restores_clean_state_and_commit_is_one_undo() {
+        let (_, mut app) = edited_fixture(Tool::Highlight);
+        app.saved_revision = app.revision;
+        let original = app.highlight_value();
+        let count = app.undo.len();
+        app.begin_colour();
+        app.update_colour(original, [0, 120, 240], false, false);
+        assert_eq!(app.highlight_value(), [0, 120, 240]);
+        assert_eq!(app.undo.len(), count);
+        app.update_colour(original, [0, 120, 240], true, false);
+        assert_eq!(app.highlight_value(), original);
+        assert_eq!(app.saved_revision, app.revision);
+        assert_eq!(app.undo.len(), count);
+        app.begin_colour();
+        app.update_colour(original, [240, 20, 30], false, false);
+        app.update_colour(original, [240, 20, 30], true, true);
+        assert_eq!(app.undo.len(), count + 1);
+        app.undo(false);
+        assert_eq!(app.highlight_value(), original);
+    }
+    #[test]
+    fn next_colour_cancel_does_not_dirty_document() {
+        let (_, mut app) = edited_fixture(Tool::Highlight);
+        app.selected = None;
+        let rev = app.revision;
+        let original = app.highlight_colour;
+        app.begin_colour();
+        app.update_colour(original, [1, 2, 3], false, false);
+        app.update_colour(original, [1, 2, 3], true, false);
+        assert_eq!(app.highlight_colour, original);
+        assert_eq!(app.revision, rev);
+    }
+    #[test]
+    fn block_transaction_validates_rolls_back_and_commits_once() {
+        let (_, mut app) = edited_fixture(Tool::Pixelate);
+        app.saved_revision = app.revision;
+        let count = app.undo.len();
+        app.begin_block();
+        app.preview_block(48);
+        app.block_input = "999".into();
+        assert!(app.parse_block_input().is_none());
+        assert_eq!(app.block_value(), 48);
+        app.finish_block(false);
+        assert_eq!(app.block_value(), 12);
+        assert_eq!(app.saved_revision, app.revision);
+        assert_eq!(app.undo.len(), count);
+        app.begin_block();
+        app.preview_block(32);
+        app.preview_block(64);
+        app.finish_block(true);
+        assert_eq!(app.undo.len(), count + 1);
+        app.undo(false);
+        app.selected = Some(0);
+        assert_eq!(app.block_value(), 12);
+        assert_eq!(app.pixelate_block, 12);
+    }
+    #[test]
+    fn next_block_cancel_preserves_document_and_defaults() {
+        let (_, mut app) = edited_fixture(Tool::Pixelate);
+        app.selected = None;
+        let rev = app.revision;
+        app.preview_block(64);
+        app.finish_block(false);
+        assert_eq!(app.pixelate_block, 12);
+        assert_eq!(app.revision, rev);
+    }
+    #[test]
+    fn cancelled_move_preserves_redo_and_clean_state() {
+        let (_, mut app) = edited_fixture(Tool::Redact);
+        app.saved_revision = app.revision;
+        app.redo.push(Edits::read(app.doc.as_ref().unwrap()));
+        app.moving = Some(app.doc.as_ref().unwrap().annotations[0].clone());
+        app.begin_move();
+        editor::translate_annotation(
+            &mut app.doc.as_mut().unwrap().annotations[0],
+            Point { x: 4., y: 5. },
+            1200,
+            750,
+        )
+        .unwrap();
+        app.changed();
+        app.cancel_tool();
+        assert_eq!(app.redo.len(), 1);
+        assert_eq!(app.saved_revision, app.revision);
+    }
+    #[test]
+    fn colour_modal_guards_replacement_and_capture() {
+        let (ctx, mut app) = edited_fixture(Tool::Highlight);
+        app.begin_colour();
+        assert!(!app.capture_available());
+        app.request(&ctx, Pending::CloseScreenshot);
+        assert!(app.pending.is_none());
+        assert!(app.doc.is_some());
+    }
+    #[test]
+    fn tiny_pixelation_does_not_enter_history() {
+        let (_, mut app) = edited_fixture(Tool::Pixelate);
+        let count = app.undo.len();
+        app.commit(Point { x: 1., y: 1. }, Point { x: 2., y: 2. });
+        assert_eq!(app.undo.len(), count);
+        assert_eq!(app.doc.as_ref().unwrap().annotations.len(), 1);
+    }
+
+    #[test]
+    fn fresh_capture_close_is_guarded_but_saved_image_can_close() {
+        let ctx = egui::Context::default();
+        let mut app = Framecraft::with_context(&ctx, false);
+        app.load(ctx.clone(), image::RgbaImage::new(80, 60), "capture".into());
+        app.fresh_capture = true;
+        app.request(&ctx, Pending::CloseScreenshot);
+        assert!(matches!(app.pending, Some(Pending::CloseScreenshot)));
+        assert!(app.doc.is_some());
+        app.pending = None;
+        app.fresh_capture = false;
+        app.request(&ctx, Pending::CloseScreenshot);
+        assert!(app.doc.is_none());
+        assert!(!app.closing);
+    }
+    #[test]
+    fn cancel_move_restores_original_without_creating_redo_edit() {
+        let ctx = egui::Context::default();
+        let mut app = Framecraft::with_context(&ctx, true);
+        app.tool = Tool::Redact;
+        app.commit(Point { x: 10., y: 10. }, Point { x: 40., y: 40. });
+        let original = app.doc.as_ref().unwrap().annotations[0].clone();
+        app.selected = Some(0);
+        app.moving = Some(original.clone());
+        app.begin_move();
+        editor::translate_annotation(
+            &mut app.doc.as_mut().unwrap().annotations[0],
+            Point { x: 20., y: 20. },
+            1200,
+            750,
+        )
+        .unwrap();
+        app.cancel_tool();
+        assert_eq!(app.doc.as_ref().unwrap().annotations[0], original);
+        assert!(app.redo.is_empty());
+        assert_eq!(app.undo.len(), 1);
+    }
+    #[test]
+    fn selected_highlight_changes_neither_next_default_nor_other_marks() {
+        let ctx = egui::Context::default();
+        let mut app = Framecraft::with_context(&ctx, true);
+        app.tool = Tool::Highlight;
+        app.commit(Point { x: 10., y: 10. }, Point { x: 40., y: 40. });
+        app.selected = Some(0);
+        let next = app.highlight_colour;
+        app.set_highlight_colour([255, 0, 20]);
+        assert_eq!(app.highlight_colour, next);
+        assert!(matches!(
+            app.doc.as_ref().unwrap().annotations[0],
+            Annotation::Highlight {
+                colour: [255, 0, 20, 80],
+                ..
+            }
+        ));
+        app.undo(false);
+        assert!(
+            matches!(app.doc.as_ref().unwrap().annotations[0],Annotation::Highlight{colour,..} if colour[..3]==next)
+        );
+    }
+
     #[test]
     fn first_launch_starts_with_single_capture_and_dialogs_gate_it() {
         let ctx = egui::Context::default();
@@ -2402,13 +3986,17 @@ mod tests {
         let mut app = Framecraft::with_context(&ctx, true);
         app.changed();
         app.page = Page::Session;
-        app.capture(&ctx, CaptureMode::Area);
+        app.capture_with_permission(&ctx, CaptureMode::Area, || {
+            capture::PermissionStatus::Granted
+        });
         assert!(matches!(
             app.pending,
             Some(Pending::Capture(CaptureMode::Area))
         ));
         assert!(app.job.is_none());
-        app.capture(&ctx, CaptureMode::Screen);
+        app.capture_with_permission(&ctx, CaptureMode::Screen, || {
+            capture::PermissionStatus::Granted
+        });
         assert!(matches!(
             app.pending,
             Some(Pending::Capture(CaptureMode::Area))
@@ -2567,8 +4155,9 @@ mod tests {
         let ctx = egui::Context::default();
         let mut app = Framecraft::with_context(&ctx, true);
         app.tool = Tool::Text;
-        app.text_input = "Review this".into();
         app.place_annotation(Point { x: 50.0, y: 50.0 });
+        app.text_draft.as_mut().unwrap().text = "Review this".into();
+        assert!(app.commit_text_draft());
         app.move_selected(Point { x: 10.0, y: 5.0 });
         assert!(
             matches!(&app.doc.as_ref().unwrap().annotations[0],Annotation::Text{position,..} if position.x==60.0)

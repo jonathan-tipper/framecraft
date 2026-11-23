@@ -1,22 +1,33 @@
-# Framecraft 0.3.0-beta.2
+# Framecraft 0.3.0-beta.6
 
-Capture an area of your Mac’s screen, annotate it, then copy or save the image. For meetings and presentations, collect a sequence of frames and return to it later. Images and OCR stay on your Mac.
+Press your shortcut, select a rectangle, then paste at the cursor in the app you were using. You can also save to a chosen folder, annotate a screenshot, or collect a series of frames. Framecraft processes images and recognises text locally.
 
 ## Install on your Mac
 
-Download the Apple silicon DMG from [the beta release](https://github.com/jonathan-tipper/framecraft/releases/tag/v0.3.0-beta.2). Open it, drag **Framecraft** onto **Applications**, then launch Framecraft from Applications. The capture-frame icon appears in your menu bar; Framecraft also has a Dock icon and normal application menus.
+**Download beta 6 for Apple silicon.** Open the DMG, drag **Framecraft** into **Applications**, eject the disk image and open Framecraft from Applications. Its capture icon appears in your menu bar. [Download the DMG and checksum](https://github.com/jonathan-tipper/framecraft/releases/tag/v0.3.0-beta.6)
 
-This beta is ad-hoc signed, not Developer ID signed or notarised. macOS may block the first launch. Follow the [installation guide](docs/INSTALLATION.md) and only allow this specific build if you trust it. macOS 13 is the deployment baseline; Intel, older-system runtime and clean-Mac distribution remain unverified. See [recorded checks](docs/TEST-NOTES.md).
+Beta 6 uses an ad-hoc signature and has no Apple notarisation. If macOS blocks the first launch, approve Framecraft under **System Settings → Privacy & Security → Open Anyway**. Screen Recording access is a separate step. The guide covers both and the permission repair for upgrades. [Mac installation guide](docs/INSTALLATION.md) · [Test results](docs/TEST-NOTES.md)
 
 ## Take your first screenshot
 
-1. Click **Capture Area…** in the window or from the Framecraft menu bar icon.
-2. Drag a rectangle around the content on screen. Press Escape to cancel.
-3. Review the result. Use **Copy Image**, **Save PNG…**, or an annotation tool. **Background & framing** adds optional presentation styling; new captures start with unchanged dimensions.
+1. Open **Capture setup**. Check Screen Recording access. In **Shortcut**, choose **Record shortcut** and press your preferred combination, or choose **Use menu bar only**. ⌘ means Command and ⇧ means Shift.
+2. Choose **Copy and return** on the last step and finish setup. Keep Framecraft running.
+3. In a rich-text TextEdit document, place the insertion point between two words. Press the configured shortcut and drag a small rectangle. **Escape** cancels.
+4. Press **⌘V**. The selected pixels should appear between the words. To annotate instead, choose **Edit Last Capture…** from Framecraft’s menu bar icon. For files, choose **Save and return** in setup and check the displayed folder and filename preview.
 
 **Capture Window…** selects a window. **Capture Screen** takes the primary display. **Open Image…** imports a PNG or JPEG. The same capture commands are in the Mac’s **Capture** application menu. The app requests the screen access macOS requires; it never grants itself permission.
 
-Shortcuts are optional. **Command (⌘)** and **Option (⌥)** are Mac modifier keys. While Framecraft is active, **Command + Option + 4** captures an area, **5** a window and **3** the primary display. Open **Keyboard Shortcuts…** for the full list and selectable session bindings. You do not need to type key syntax.
+Shortcuts are optional. **Command (⌘)** and **Option (⌥)** are Mac modifier keys. While Framecraft is active, **Command + Option + 4** captures an area, **5** a window and **3** the primary display. Use **Capture setup** for an everyday shortcut that works from other apps while Framecraft is running. **More Capture → Session & app shortcuts…** contains the existing app commands and session bindings. You do not need to type key syntax.
+
+## Edit and leave a screenshot
+
+The development editor uses a labelled tool rail and a contextual inspector. Choose **Highlight** for named colour presets and custom RGB, or **Pixelate** to draw an area and adjust **Block size**. The inspector distinguishes settings for the next mark from properties of a selected mark. Use **Redact** for an opaque cover; pixelation is not guaranteed concealment.
+
+**Text** now works in placement order: choose Text, click the image, type, then **Add text**. Select a label and choose **Edit text…**, or double-click it, to revise it. **Apply changes** commits one undo step; Cancel/Escape preserves the original.
+
+Previous editor and save-then-edit preferences carry over. **Copy and return** uses a Mac-only pasteboard. **Save and return** writes a PNG and leaves the clipboard alone. A direct grab stays available in memory for **Edit Last Capture…**. **Retry Last Output** recovers a failed copy or save. **Clear Last Capture** releases the retained image. Reopened PNGs contain flattened text and marks. Persistent editable documents are tracked in [#33](https://github.com/jonathan-tipper/framecraft/issues/33).
+
+**Cancel tool** returns to Select and preserves completed marks. Use Undo after committing a mark. **Close screenshot** leaves Framecraft running; a fresh capture or unsaved edit offers Save, Discard changes and Cancel. Copying to the clipboard does not count as saving a file. Native checks and outstanding limits are recorded in [TEST-NOTES](docs/TEST-NOTES.md).
 
 ## Collect several frames
 
@@ -67,6 +78,7 @@ Images use RGBA8. Colour-managed wide-gamut/HDR output is not implemented; impor
 - [Developer guide](docs/DEVELOPER-GUIDE.md) and [architecture](docs/ARCHITECTURE.md).
 - [Testing](docs/TESTING.md), [recorded results](docs/TEST-NOTES.md), and [0.3 specification](docs/specs/0.3-session-workbench.md).
 - [Product direction](docs/PRODUCT.md), [dependency inventory](docs/DEPENDENCIES.md), and [third-party notices](docs/THIRD-PARTY-NOTICES.md).
+- [Editor design prototype](docs/prototypes/editor/README.md): proposed UI, clickable flows and story mapping for #22–#28. This is a design candidate, not a shipped app feature.
 
 ```sh
 cargo run --locked --release -- --demo

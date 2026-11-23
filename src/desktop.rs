@@ -6,6 +6,11 @@ pub enum DesktopAction {
     CaptureArea,
     CaptureWindow,
     CaptureScreen,
+    CancelCapture,
+    EditLastCapture,
+    RetryLastOutput,
+    ClearLastCapture,
+    CloseScreenshot,
     Settings,
     Capture,
     PauseResume,
@@ -21,6 +26,57 @@ pub enum DesktopState {
     Error,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LastCaptureStatus {
+    Copied,
+    Saved,
+    CopyFailed,
+    SaveFailed,
+}
+
+impl LastCaptureStatus {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Copied => "Copied on this Mac",
+            Self::Saved => "Saved to file",
+            Self::CopyFailed => "Copy failed",
+            Self::SaveFailed => "Save failed",
+        }
+    }
+
+    pub fn status_item_title(self) -> Option<&'static str> {
+        match self {
+            Self::CopyFailed | Self::SaveFailed => Some(self.label()),
+            Self::Copied | Self::Saved => None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum QuickShortcutState {
+    #[default]
+    Off,
+    Active,
+    Unavailable,
+}
+impl QuickShortcutState {
+    pub fn description(self, binding: &str) -> String {
+        match self {
+            Self::Active => format!("{binding} is active while Framecraft is running."),
+            Self::Off => "Everyday shortcut is off. Use Capture Area in the menu bar.".into(),
+            Self::Unavailable => format!("Could not register {binding}. Use Capture Area or choose another shortcut in Capture setup."),
+        }
+    }
+    #[cfg(target_os = "macos")]
+    fn menu_title(self, binding: &str) -> String {
+        match self {
+            Self::Off => "Capture Area…  (shortcut off)".into(),
+            Self::Active => format!("Capture Area…  {binding}"),
+            Self::Unavailable => format!("Capture Area…  ({binding} unavailable)"),
+        }
+    }
+}
+
 pub fn status_text(state: DesktopState, count: usize) -> String {
     let phase = match state {
         DesktopState::Running => "Running",
@@ -32,7 +88,11 @@ pub fn status_text(state: DesktopState, count: usize) -> String {
 }
 
 #[cfg(target_os = "macos")]
+mod exclusive_shortcut;
+
+#[cfg(target_os = "macos")]
 mod native {
+    use super::exclusive_shortcut::ExclusiveShortcuts;
     use super::*;
     use global_hotkey::{hotkey::HotKey, GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState};
     use objc2::{
@@ -172,8 +232,16 @@ mod native {
         tray: TrayIcon,
         application_menu: Menu,
         capture_area: MenuItem,
+        app_capture_area: MenuItem,
         capture_window: MenuItem,
         capture_screen: MenuItem,
+        cancel_capture: MenuItem,
+        edit_last: MenuItem,
+        retry_last: MenuItem,
+        clear_last: MenuItem,
+        last_receipt: MenuItem,
+        capture_status: Option<LastCaptureStatus>,
+        close_screenshot: MenuItem,
         settings: MenuItem,
         quit: MenuItem,
         status: MenuItem,
@@ -182,8 +250,11 @@ mod native {
         pause: MenuItem,
         stop: MenuItem,
         review: MenuItem,
-        manager: GlobalHotKeyManager,
+        manager: Result<GlobalHotKeyManager, String>,
+        quick_bindings: Result<ExclusiveShortcuts, String>,
         keys: Option<[HotKey; 3]>,
+        quick_key: Option<HotKey>,
+        suppressed_quick_press: bool,
         menus: mpsc::Receiver<tray_icon::menu::MenuEvent>,
         hotkeys: mpsc::Receiver<GlobalHotKeyEvent>,
         visibility: mpsc::Receiver<(bool, mpsc::SyncSender<Result<(), String>>)>,
@@ -204,7 +275,8 @@ mod native {
             let quits = install_quit_handler(main_thread, wake.clone())?;
             let menu = Menu::new();
             let capture_keys = Modifiers::META | Modifiers::ALT;
-            let capture_area = MenuItem::new(
+            let capture_area = MenuItem::new(QuickShortcutState::Off.menu_title(""), true, None);
+            let app_capture_area = MenuItem::new(
                 "Capture Area…",
                 true,
                 Some(Accelerator::new(capture_keys, Code::Digit4)),
@@ -219,8 +291,20 @@ mod native {
                 true,
                 Some(Accelerator::new(capture_keys, Code::Digit3)),
             );
+            let cancel_capture = MenuItem::new("Cancel Capture", false, None);
+            let edit_last = MenuItem::new("Edit Last Capture…", false, None);
+            let retry_last = MenuItem::new("Retry Last Output", false, None);
+            let clear_last = MenuItem::new("Clear Last Capture", false, None);
+            let last_receipt = MenuItem::new("No capture in memory", false, None);
+            let last_options = Submenu::with_items(
+                "Last Capture Options",
+                true,
+                &[&last_receipt, &retry_last, &clear_last],
+            )
+            .map_err(|e| e.to_string())?;
+            let close_screenshot = MenuItem::new("Close Screenshot", false, None);
             let settings = MenuItem::new(
-                "Keyboard Shortcuts…",
+                "Capture setup…",
                 true,
                 Some(Accelerator::new(Modifiers::META, Code::Comma)),
             );
@@ -239,6 +323,9 @@ mod native {
                 &capture_area,
                 &capture_window,
                 &capture_screen,
+                &cancel_capture,
+                &edit_last,
+                &last_options,
                 &PredefinedMenuItem::separator(),
                 &review,
                 &settings,
@@ -269,7 +356,7 @@ mod native {
                     "Take a screenshot or control a capture session.",
                 )));
             }
-            let manager = GlobalHotKeyManager::new().map_err(|e| e.to_string())?;
+            let manager = GlobalHotKeyManager::new().map_err(|e| e.to_string());
             // Normal application menus make Framecraft visible by name when
             // focused. Menu events use the same guarded application actions as
             // the status item, including Quit; no native termination bypass.
@@ -291,9 +378,12 @@ mod native {
                 "Capture",
                 true,
                 &[
-                    &capture_area,
+                    &app_capture_area,
                     &capture_window,
                     &capture_screen,
+                    &cancel_capture,
+                    &edit_last,
+                    &last_options,
                     &PredefinedMenuItem::separator(),
                     &capture,
                     &pause,
@@ -306,6 +396,7 @@ mod native {
                 true,
                 &[
                     &review,
+                    &close_screenshot,
                     &PredefinedMenuItem::minimize(None),
                     &PredefinedMenuItem::zoom(None),
                 ],
@@ -320,6 +411,15 @@ mod native {
                 menu_wake();
             }));
             let (key_tx, hotkeys) = mpsc::channel();
+            let quick_tx = key_tx.clone();
+            let quick_wake = wake.clone();
+            let quick_bindings = ExclusiveShortcuts::new(move |id| {
+                let _ = quick_tx.send(GlobalHotKeyEvent {
+                    id,
+                    state: HotKeyState::Pressed,
+                });
+                quick_wake();
+            });
             let key_wake = wake.clone();
             GlobalHotKeyEvent::set_event_handler(Some(move |event| {
                 let _ = key_tx.send(event);
@@ -344,8 +444,16 @@ mod native {
                 tray,
                 application_menu,
                 capture_area,
+                app_capture_area,
                 capture_window,
                 capture_screen,
+                cancel_capture,
+                edit_last,
+                retry_last,
+                clear_last,
+                last_receipt,
+                capture_status: None,
+                close_screenshot,
                 settings,
                 quit,
                 status,
@@ -355,7 +463,10 @@ mod native {
                 stop,
                 review,
                 manager,
+                quick_bindings,
                 keys: None,
+                quick_key: None,
+                suppressed_quick_press: false,
                 menus,
                 hotkeys,
                 visibility,
@@ -366,19 +477,36 @@ mod native {
         }
 
         pub fn poll(&mut self) -> Vec<DesktopAction> {
+            self.poll_with_capture_hide(|| {})
+        }
+        pub fn poll_with_capture_hide(
+            &mut self,
+            mut hide_thumbnail: impl FnMut(),
+        ) -> Vec<DesktopAction> {
             let mut actions = Vec::new();
+            self.suppressed_quick_press = false;
             if self.quits.try_recv().is_ok() {
                 actions.push(DesktopAction::Quit);
             }
             for (hidden, ack) in self.visibility.try_iter() {
+                if hidden {
+                    hide_thumbnail();
+                }
                 let result = self
                     .tray
                     .set_visible(!hidden)
                     .map_err(|error| error.to_string());
+                if !hidden && result.is_ok() {
+                    // AppKit creates a new status button when the capture
+                    // controls return. Restore its accessibility name too.
+                    self.update_status_button_accessibility();
+                }
                 let _ = ack.send(result);
             }
             for event in self.menus.try_iter() {
-                if event.id == *self.capture_area.id() && self.capture_area.is_enabled() {
+                if (event.id == *self.capture_area.id() || event.id == *self.app_capture_area.id())
+                    && self.capture_area.is_enabled()
+                {
                     actions.push(DesktopAction::CaptureArea);
                 } else if event.id == *self.capture_window.id() && self.capture_window.is_enabled()
                 {
@@ -386,6 +514,19 @@ mod native {
                 } else if event.id == *self.capture_screen.id() && self.capture_screen.is_enabled()
                 {
                     actions.push(DesktopAction::CaptureScreen);
+                } else if event.id == *self.close_screenshot.id()
+                    && self.close_screenshot.is_enabled()
+                {
+                    actions.push(DesktopAction::CloseScreenshot);
+                } else if event.id == *self.edit_last.id() && self.edit_last.is_enabled() {
+                    actions.push(DesktopAction::EditLastCapture);
+                } else if event.id == *self.retry_last.id() && self.retry_last.is_enabled() {
+                    actions.push(DesktopAction::RetryLastOutput);
+                } else if event.id == *self.clear_last.id() && self.clear_last.is_enabled() {
+                    actions.push(DesktopAction::ClearLastCapture);
+                } else if event.id == *self.cancel_capture.id() && self.cancel_capture.is_enabled()
+                {
+                    actions.push(DesktopAction::CancelCapture);
                 } else if event.id == *self.settings.id() {
                     actions.push(DesktopAction::Settings);
                 } else if event.id == *self.quit.id() {
@@ -404,6 +545,14 @@ mod native {
                 if event.state != HotKeyState::Pressed {
                     continue;
                 }
+                if self.quick_key.is_some_and(|key| key.id() == event.id) {
+                    if self.capture_area.is_enabled() {
+                        actions.push(DesktopAction::CaptureArea);
+                    } else {
+                        self.suppressed_quick_press = true;
+                    }
+                    continue;
+                }
                 if let Some(keys) = self.keys {
                     if let Some(index) = keys.iter().position(|key| key.id() == event.id) {
                         actions.push(
@@ -419,18 +568,15 @@ mod native {
             actions
         }
 
+        pub fn suppressed_quick_press(&self) -> bool {
+            self.suppressed_quick_press
+        }
+
         pub fn update(&mut self, state: DesktopState, count: usize, source: &str) {
             let text = status_text(state, count);
             if text != self.last_status {
                 self.status.set_text(&text);
                 let _ = self.tray.set_tooltip(Some(&text));
-                if let Some(button) = MainThreadMarker::new()
-                    .and_then(|mtm| self.tray.ns_status_item().and_then(|item| item.button(mtm)))
-                {
-                    button.setAccessibilityHelp(Some(&NSString::from_str(&format!(
-                        "{text}. Open the menu to take a screenshot or control the session."
-                    ))));
-                }
                 self.pause.set_text(if state == DesktopState::Running {
                     "Pause Session"
                 } else {
@@ -440,6 +586,7 @@ mod native {
                 self.pause.set_enabled(state != DesktopState::Stopped);
                 self.stop.set_enabled(state != DesktopState::Stopped);
                 self.last_status = text;
+                self.update_status_button_accessibility();
             }
             if source != self.last_source {
                 // Bounded text contains only the user-selected source summary.
@@ -453,10 +600,52 @@ mod native {
 
         /// Disable one-off capture during another capture, a modal decision or
         /// any state in which the application cannot safely replace its image.
+        pub fn set_close_available(&mut self, available: bool) {
+            self.close_screenshot.set_enabled(available);
+        }
+        fn update_status_button_accessibility(&self) {
+            let Some(button) = MainThreadMarker::new()
+                .and_then(|mtm| self.tray.ns_status_item().and_then(|item| item.button(mtm)))
+            else {
+                return;
+            };
+            let (label, help) = match self.capture_status.and_then(LastCaptureStatus::status_item_title) {
+                Some(failure) => (format!("Framecraft. {failure}."), "Open Last Capture Options to retry, or choose Edit Last Capture to recover the image."),
+                None => ("Framecraft".into(), "Open the menu to take a screenshot or control the session."),
+            };
+            button.setAccessibilityLabel(Some(&NSString::from_str(&label)));
+            button.setAccessibilityHelp(Some(&NSString::from_str(&format!(
+                "{}. {help}",
+                self.last_status
+            ))));
+        }
+        pub fn set_last_capture(&mut self, receipt: Option<LastCaptureStatus>, available: bool) {
+            self.edit_last.set_enabled(available && receipt.is_some());
+            self.clear_last.set_enabled(available && receipt.is_some());
+            let failure = receipt.and_then(LastCaptureStatus::status_item_title);
+            self.retry_last.set_enabled(available && failure.is_some());
+            if self.capture_status != receipt {
+                self.capture_status = receipt;
+                self.last_receipt.set_text(
+                    receipt
+                        .map(LastCaptureStatus::label)
+                        .unwrap_or("No capture in memory"),
+                );
+                self.tray.set_title(failure);
+                self.update_status_button_accessibility();
+            }
+        }
         pub fn set_capture_available(&mut self, available: bool) {
             self.capture_area.set_enabled(available);
+            self.app_capture_area.set_enabled(available);
             self.capture_window.set_enabled(available);
             self.capture_screen.set_enabled(available);
+        }
+
+        /// Only the active one-off capture owns this cancellation route. The
+        /// session Stop action and its state remain separate.
+        pub fn set_capture_cancellable(&mut self, cancellable: bool) {
+            self.cancel_capture.set_enabled(cancellable);
         }
 
         /// A failed replacement rolls back newly registered keys. Retained old
@@ -480,17 +669,21 @@ mod native {
                 })
                 .collect::<Result<Vec<_>, _>>()?;
             let new: [HotKey; 3] = parsed.try_into().map_err(|_| "Expected three shortcuts.")?;
+            if self.quick_key.is_some_and(|key| new.contains(&key)) {
+                return Err("A session shortcut conflicts with your quick capture shortcut. Change it in Capture Setup first.".into());
+            }
             let previous = self.keys;
+            let manager = self.manager.as_ref().map_err(Clone::clone)?;
             replace_shortcuts(
                 previous.as_ref().map_or(&[], |keys| keys.as_slice()),
                 &new,
                 |key| {
-                    self.manager
+                    manager
                         .register(*key)
                         .map_err(|_| "macOS could not register this key combination".to_string())
                 },
                 |key| {
-                    self.manager
+                    manager
                         .unregister(*key)
                         .map_err(|_| "macOS could not release this key combination".to_string())
                 },
@@ -499,9 +692,56 @@ mod native {
             Ok(())
         }
 
+        /// One-off capture stays registered independently of a running session.
+        /// Register the replacement first so a conflict preserves the old key.
+        pub fn configure_quick_capture(&mut self, shortcut: Option<&str>) -> Result<(), String> {
+            self.commit_quick_capture(shortcut, || Ok(())).map(|_| ())
+        }
+        pub fn set_quick_shortcut_status(&self, status: QuickShortcutState, binding: &str) {
+            self.capture_area.set_text(status.menu_title(binding));
+        }
+        pub fn commit_quick_capture(
+            &mut self,
+            shortcut: Option<&str>,
+            persist: impl FnOnce() -> Result<(), String>,
+        ) -> Result<Option<String>, String> {
+            let new = shortcut
+                .map(|value| {
+                    crate::quick_capture::canonical_quick_shortcut(value)?
+                        .parse::<HotKey>()
+                        .map_err(|_| {
+                            "This capture shortcut is not supported. Choose another combination."
+                                .to_string()
+                        })
+                })
+                .transpose()?;
+            if new.is_some_and(|key| self.keys.is_some_and(|keys| keys.contains(&key))) {
+                return Err("The capture shortcut is already used by a session command. Choose another combination.".into());
+            }
+            let warning = commit_quick_binding(
+                self.quick_key,
+                new,
+                |key| {
+                    self.quick_bindings
+                        .as_ref()
+                        .map_err(Clone::clone)?
+                        .register(key)
+                },
+                |key| {
+                    self.quick_bindings
+                        .as_ref()
+                        .map_err(Clone::clone)?
+                        .release(key)
+                },
+                persist,
+            )?;
+            self.quick_key = new;
+            Ok(warning)
+        }
+
         pub fn clear_shortcuts(&mut self) {
-            if let Some(keys) = self.keys.take() {
-                let _ = self.manager.unregister_all(&keys);
+            if let (Ok(manager), Some(keys)) = (&self.manager, self.keys.take()) {
+                let _ = manager.unregister_all(&keys);
             }
             while self.hotkeys.try_recv().is_ok() {}
         }
@@ -514,6 +754,7 @@ mod native {
             }
             crate::capture::set_visibility_handler(None);
             self.clear_shortcuts();
+            let _ = self.configure_quick_capture(None);
             MenuEvent::set_event_handler(None::<fn(MenuEvent)>);
             GlobalHotKeyEvent::set_event_handler(None::<fn(GlobalHotKeyEvent)>);
         }
@@ -556,6 +797,39 @@ mod native {
             );
         }
     }
+}
+
+/// Keep the old key registered until both its replacement and its preference
+/// file are committed. Event dispatch uses only the committed binding.
+#[cfg(any(target_os = "macos", test))]
+fn commit_quick_binding<T: Copy + PartialEq>(
+    previous: Option<T>,
+    new: Option<T>,
+    mut register: impl FnMut(T) -> Result<(), String>,
+    mut release: impl FnMut(T) -> Result<(), String>,
+    persist: impl FnOnce() -> Result<(), String>,
+) -> Result<Option<String>, String> {
+    if previous == new {
+        persist()?;
+        return Ok(None);
+    }
+    if let Some(key) = new {
+        register(key)?;
+    }
+    if let Err(error) = persist() {
+        if let Some(key) = new {
+            if let Err(cleanup) = release(key) {
+                return Err(format!(
+                    "{error}. {cleanup}. Reopen Framecraft to release the unused key."
+                ));
+            }
+        }
+        return Err(error);
+    }
+    let warning = previous.and_then(|key| release(key).err()).map(|error| {
+        format!("Capture setup saved. {error}. Reopen Framecraft to release the previous key.")
+    });
+    Ok(warning)
 }
 
 /// Register additions before releasing obsolete bindings. If an OS operation
@@ -621,10 +895,36 @@ impl DesktopControls {
     pub fn poll(&mut self) -> Vec<DesktopAction> {
         Vec::new()
     }
+    pub fn suppressed_quick_press(&self) -> bool {
+        false
+    }
+    pub fn poll_with_capture_hide(&mut self, _: impl FnMut()) -> Vec<DesktopAction> {
+        self.poll()
+    }
     pub fn update(&mut self, _: DesktopState, _: usize, _: &str) {}
     pub fn set_capture_available(&mut self, _: bool) {}
+    pub fn set_close_available(&mut self, _: bool) {}
+    pub fn set_last_capture(&mut self, _: Option<LastCaptureStatus>, _: bool) {}
+    pub fn set_capture_cancellable(&mut self, _: bool) {}
     pub fn configure_shortcuts(&mut self, _: &ShortcutSettings, _: bool) -> Result<(), String> {
         Err("Global shortcuts require macOS.".into())
+    }
+    pub fn configure_quick_capture(&mut self, shortcut: Option<&str>) -> Result<(), String> {
+        if shortcut.is_none() {
+            Ok(())
+        } else {
+            Err("Global shortcuts require macOS.".into())
+        }
+    }
+    pub fn set_quick_shortcut_status(&self, _: QuickShortcutState, _: &str) {}
+    pub fn commit_quick_capture(
+        &mut self,
+        shortcut: Option<&str>,
+        persist: impl FnOnce() -> Result<(), String>,
+    ) -> Result<Option<String>, String> {
+        self.configure_quick_capture(shortcut)?;
+        persist()?;
+        Ok(None)
     }
     pub fn clear_shortcuts(&mut self) {}
 }
@@ -633,6 +933,67 @@ impl DesktopControls {
 mod tests {
     use super::*;
     use std::cell::RefCell;
+    #[test]
+    fn direct_output_failures_name_the_action_on_the_status_item_until_recovery_or_clear() {
+        use LastCaptureStatus::*;
+        let receipts = [
+            None,
+            Some(CopyFailed),
+            Some(Copied),
+            Some(SaveFailed),
+            Some(Saved),
+            Some(CopyFailed),
+            None,
+        ];
+        assert_eq!(
+            receipts.map(|receipt| receipt.and_then(LastCaptureStatus::status_item_title)),
+            [
+                None,
+                Some("Copy failed"),
+                None,
+                Some("Save failed"),
+                None,
+                Some("Copy failed"),
+                None
+            ]
+        );
+    }
+    #[test]
+    fn preference_write_failure_does_not_release_the_working_quick_binding() {
+        let keys = RefCell::new(vec![1]);
+        let result = commit_quick_binding(
+            Some(1),
+            Some(2),
+            |key| {
+                keys.borrow_mut().push(key);
+                Ok(())
+            },
+            |key| {
+                keys.borrow_mut().retain(|value| *value != key);
+                Ok(())
+            },
+            || {
+                assert_eq!(*keys.borrow(), [1, 2]);
+                Err("disk full".into())
+            },
+        );
+        assert_eq!(result.unwrap_err(), "disk full");
+        assert_eq!(*keys.borrow(), [1]);
+    }
+    #[test]
+    fn occupied_shortcut_keeps_the_previous_key_and_preferences() {
+        let result = commit_quick_binding(
+            Some(1),
+            Some(2),
+            |_| Err("occupied".into()),
+            |_| panic!("old binding must remain"),
+            || panic!("must not rewrite settings"),
+        );
+        assert_eq!(result.unwrap_err(), "occupied");
+        let same_key =
+            commit_quick_binding(Some(1), Some(1), |_| panic!(), |_| panic!(), || Ok(()));
+        assert_eq!(same_key.unwrap(), None);
+    }
     #[test]
     fn native_state_labels_always_include_phase_and_acknowledged_count() {
         for (state, label) in [

@@ -89,3 +89,29 @@ The [Mac experience specification](specs/0.3-mac-experience.md) supersedes the s
 The app reads the installed SFNS font when available and falls back to its bundled UI fonts. It does not redistribute Apple's font. New captures/imports start without added styling; the CLI renderer's established default style remains unchanged.
 
 Run `scripts/bundle-macos.sh`, `scripts/test-install-macos.sh`, then `scripts/package-macos.sh --skip-build`. Packaging verifies the bundle/version and writes a versioned DMG. `scripts/install-macos.sh` installs into Applications; updates require `--replace` and a stopped app. See [installation](INSTALLATION.md). App icon sources are in `packaging/make-icon.swift`; regenerate deliberately, never during an unrelated build. Preserve the macOS 13 deployment target and run native controls smoke after changing application menus.
+
+
+## Beta 5 setup and text changes
+
+See [everyday capture](specs/everyday-capture.md) for the UI/state contract. `--demo` skips automatic first-run setup; normal launch shows it until explicitly completed. Quick-capture preferences are separate from session shortcuts. Tests use temporary directories and injected outcomes; they must not register real global keys or change macOS privacy settings. Native testing should use synthetic images and a disposable folder. A preview bundle with a separate identifier can verify setup/text without replacing the installed app; it does not prove screen-access identity or background capture for the release bundle.
+
+The source build is ad-hoc signed. Rebuilding can change its macOS permission identity. Use the same build between granting Screen Recording and testing capture.
+
+## Package a Developer ID beta
+
+The GitHub verification job runs on `macos-15` with a macOS 13 deployment target. GitHub retired the macOS 14 runner on 2 November 2026. [GitHub runner announcement](https://github.blog/changelog/2026-10-01-github-actions-macos-14-runner-image-retirement/)
+
+Use a clean checkout of the reviewed candidate and a Mac with the project's **Developer ID Application** identity and private key in Keychain. The notarytool profile belongs in Keychain too. The two environment values below are a certificate name or fingerprint and a profile name. Keep passwords and private keys out of the shell command, repository and GitHub issue.
+
+```sh
+security find-identity -v -p codesigning
+export FRAMECRAFT_SIGN_IDENTITY='Developer ID Application: Your publisher (TEAMID)'
+export FRAMECRAFT_NOTARY_PROFILE='your-existing-notarytool-profile'
+./scripts/package-macos.sh --developer-id
+```
+
+The script archives the named Git commit into a fresh staging directory and builds that source once. It signs the app with a timestamp and the hardened runtime, submits it to Apple, and staples the accepted ticket. It then creates and signs the DMG, obtains its ticket, mounts it read-only and assesses both the DMG and the enclosed app with Gatekeeper. The mounted executable must match the candidate. A failed check stops publication.
+
+Successful output is under `dist/releases/Framecraft-<version>-macos-<architecture>/`. It contains the final DMG, its SHA-256 sidecar and `BUILD-INFO.txt` with the source commit, signing identity and submission IDs. Publish those three files to the GitHub prerelease for that exact commit. Verify the downloaded DMG against the sidecar and record the separate physical Mac test in issue #35. The distribution script makes no GitHub changes itself. [Apple Developer ID](https://developer.apple.com/developer-id/) · [Apple notarisation workflow](https://developer.apple.com/documentation/security/customizing-the-notarization-workflow)
+
+For development, `./scripts/package-macos.sh` produces `*-development.dmg` and its checksum. Run `./scripts/test-package-macos.sh path/to/the-development.dmg` to exercise the signing guard and verify the app and installer layout on a read-only mount. CI uploads this development image separately from GitHub prerelease assets.

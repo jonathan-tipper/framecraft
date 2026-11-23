@@ -12,7 +12,8 @@ Framecraft is a Rust desktop application with an egui/eframe GPU-rendered interf
 | `session.rs` | Atomic PNG storage, safe filenames, per-capture synchronisation and change detection |
 | `library.rs` | Versioned manifests, stable capture IDs, file inspection, confirmation/recovery, folder locking and recents |
 | `capture.rs` | Bounded system screenshot process, display geometry checks, cropping and capture-control visibility |
-| `desktop.rs`, `settings.rs` | Main-thread menu bar/global shortcuts and local preferences |
+| `desktop.rs`, `settings.rs` | Main-thread menu bar/global shortcuts and session shortcut preferences |
+| `quick_capture.rs`, `setup_ui.rs` | Independent one-off capture settings, UTC names, cancellable no-clobber PNG publication and native setup draft |
 | `naming.rs` | Apple Vision observations, separate heading ranking and full-text reading order |
 | `editor.rs` | Source-coordinate annotations, glyph rasterisation, validation, crop/style composition and flattened pixels |
 | `output.rs` | Resolved pixel snapshots, neutral drag PNGs and staged offline packs |
@@ -65,7 +66,7 @@ A pack freezes selected snapshots, order, explicit captions and variant labels b
 
 ## Release boundaries
 
-The target is a local, ad-hoc signed macOS test bundle. Platform deployment flags are not native evidence. Permission behaviour, multiple display arrangements, menu hiding, minimised shortcuts, external drag recipients, VoiceOver and another-Mac offline packs remain explicit [test gates](TESTING.md). No performance or user-benefit claim follows merely from unit tests or a synthetic OCR pass.
+Development packages carry an ad-hoc signature. The distribution path builds in fresh staging, signs with Developer ID and hardened runtime, notarises and staples the app and DMG, and verifies the mounted app before publishing the artefacts. It records the commit, signing team, notarisation receipts and final checksum. Permission behaviour and real receiving apps need independent [Mac test evidence](TESTING.md).
 
 
 ## Beta 2 Mac entry points
@@ -73,3 +74,14 @@ The target is a local, ad-hoc signed macOS test bundle. Platform deployment flag
 The first window is single capture, with Sessions as a secondary view. Native application/menu bar actions route through the same guarded capture entry point. Capture Area uses the existing OS interactive selector; no new capture backend is introduced. App-visible capture shortcuts use the native menu accelerator on macOS. The three session bindings remain global only while a collection is active. Human-readable shortcut parts round-trip to the existing native key representation; saved legacy settings retain their meaning.
 
 The icon and DMG/install scripts are distribution assets, independent of image storage. The installed bundle has the same `dev.framecraft.app` identifier and macOS 13 baseline. Ad-hoc signing is not notarisation.
+
+
+## Everyday capture
+
+`setup_ui.rs` owns the uncommitted four-step draft. `quick_capture.rs` validates shortcuts, preserves earlier output choices and writes preferences atomically. The everyday shortcut registration is independent of session bindings. The Mac adapter keeps the old working binding during a replacement until the new key and preferences are committed.
+
+`app/handoff.rs` resolves the four one-off output modes. The worker checks cancellation before publishing a host-only PNG to the Mac pasteboard or a no-clobber file. The app holds at most one direct result, including pixels needed to retry a failed output. Opening that result uses the usual dirty-document guard. The two editor-opening modes retain their original behaviour.
+
+`native_handoff.rs` owns the Mac pasteboard, editor-window capture guard and optional non-activating preview panel. A capture temporarily hides editor pixels and mouse interception without moving the window to the front. Completion of a direct grab leaves keyboard focus in the source app. Explicitly opening the editor requests focus.
+
+Text editing uses a draft transaction isolated from underlying commands. Add/Apply creates one history entry; Cancel never adds an empty annotation. The current PNG format remains flattened. See the [everyday capture contract](specs/everyday-capture.md).

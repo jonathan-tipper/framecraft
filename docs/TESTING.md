@@ -116,3 +116,84 @@ The [pilot in #9](https://github.com/jonathan-tipper/framecraft/issues/9) needs 
 7. Test permission denial/grant/restart using the installed app, not a development launcher. Record the exact OS wording and identity; do not bypass security protections in test scripts.
 
 See TEST-NOTES.md for what was actually performed. A selector process starting does not establish that selection/cancellation succeeded.
+
+## Native editor story acceptance
+
+This matrix covers #23–#28 against [the native contract](specs/editor-native-experience.md). Use the actual beta 3 development binary with synthetic inputs. Record its commit, bundle version, OS/hardware, display scale and launch method. Browser prototype screenshots cannot satisfy these cases.
+
+| Case | Procedure and expected evidence |
+| --- | --- |
+| Fresh capture versus saved import | Close a new unannotated capture: Save/Discard/Cancel must appear. Copy first and repeat: the decision must remain. Open a clean saved PNG and close: it may return directly. |
+| Close is separate from Quit | From a dirty standalone image, test each close decision. Cancel retains the exact edits; Discard leaves the app capture-ready; completed Save retains the file and closes only that image. Repeat capture without relaunching. |
+| Save cancellation/failure | Cancel the native picker, then use a disposable unwritable destination. Both preserve current edits; cancellation is not reported as a failed save. Retry succeeds without losing the intended pending action. |
+| Save identity and revision | Automated tests inject a completion for an old document/revision. It must not acknowledge or close newer edits. Exercise the real save-and-close path separately. |
+| Session-origin close | Open a chosen variant from a stopped session, close it and verify return to the same review context. Compare original/edited files and manifest before/after; closing cannot alter them. |
+| Gesture cancellation | Hold a highlight/freehand/crop/move gesture, press Escape before release, then release. Starting geometry and history must remain. Repeat with release first, then Undo. |
+| Mode exit and nested Escape | Cancel tool retains marks. Escape in a colour editor or nested control must not close the screenshot. Verify field/popover precedence and focus return, not only the top-level dialog. |
+| Native selector cancellation | Try Area and Window with both Escape and the pointer-accessible cancellation route. Record whether the native selector permits menu interaction. Repeat after minimising; prior visibility and document must return. A test-only process termination is not a successful pointer test. |
+| Capture exclusion and cleanup | Complete a real synthetic capture and inspect whether Framecraft's controls appear. Cancel during native selection and retry immediately; no lingering child or abandoned capture should replace the editor. |
+| Highlight target and transaction | Set Next to Green, draw, select and change to Pink. Next remains Green. Preview custom RGB, Cancel, reopen and Apply, then Undo. Original value, one undo step and useful focus return must be observed. |
+| Pixelation target and transaction | Draw two regions; change only the selected one. Start at 12, commit 48, type an invalid value, Escape and Undo. Verify the last committed value and useful undo boundaries; no invalid value reaches rendering. |
+| Pixelation rendering | Verify coarse/fine changes, 2 × 2 minimum, clipped edges, source-pixel units at zoom, overlapping regions and Redact. Unit tests cover deterministic alpha/grid and hidden-source invariance; inspect actual exported PNG separately. |
+| Output parity and originals | Compare the composed reference to PNG, clipboard and prepared drag pixels. Reopen the saved flattened result; check OCR input and session/pack output routes. Originals remain byte-identical. Native receiver testing remains separate from compositor tests. |
+| Minimum and large window | At 900 × 620 logical points and a larger size, inspect capture/copy/save/close, all tool names, inspector scrolling and every dialog decision. Repeat supported display scales and OS appearance/contrast settings. Save actual native screenshots. |
+| Icon/state vocabulary | Explain Capture/Crop, Pixelate/Redact and Cancel/Close before activating. Inspect idle/hover/pressed/focus/selected/disabled/busy/error states. Do not substitute arbitrary Unicode or missing-font symbols. |
+| Keyboard and VoiceOver | Traverse tools, properties, cancellation and closing without a pointer. Record accessible names, values, selected state, focus return and duplicate announcements. An AX-tree listing alone is insufficient. |
+| Formative comparison | Run the same predefined tasks on beta 2 and the candidate with a new participant. Record completion, wrong actions, assistance, familiarity and design changes. Do not infer improved usability from developer checks. |
+
+For pixelation, unit fixtures must vary only hidden redacted/cropped source samples and compare all visible output pixels. Include transparent pixels with differing hidden RGB, partially transparent averages, block origins, clipped edges, overlap ordering and aggregate work limits. Resource-bound rejection should produce an actionable error rather than silently lowering quality.
+
+For UI changes, source or headless checks support regression diagnosis but do not establish native pointer interaction, VoiceOver or rendering at Retina scale. Keep every unperformed item explicit in TEST-NOTES and the owning issue.
+
+## Screen access recovery, beta 4
+
+Use an installed copy and record macOS version, build and executable path. Use synthetic screen content. Do not reset other applications' permissions.
+
+1. With access unavailable, click Capture Area. Framecraft must stay visible, retain the current image/edits and show Screen Access without starting a selector.
+2. Choose Request Access. Confirm the macOS prompt names the intended installed copy. The tester chooses Allow or denial; Framecraft cannot approve it.
+3. Denial must preserve the document. Check Again reads status without capturing. Open System Settings must open the recording privacy pane or show a useful fallback error.
+4. If absent, add `/Applications/Framecraft.app` using the privacy list's + button. Approve access, quit/reopen when requested, Check Again and explicitly retry capture. Test both Area and Screen with synthetic content.
+5. Record whether an ad-hoc update or different launch path requires approval again. Test the actual installed build, not only cargo/Terminal attribution.
+6. A failed/empty rectangle with granted access must retain its command diagnostic and must not assert that permission was denied. Original images remain unchanged.
+
+Record first-grant, denied, revoked, restart-required and already-granted cases separately. Managed-device restrictions and native system prompts need an actual Mac test, not mocks.
+
+
+## Beta 6 shortcut and paste on another Mac
+
+The following checks run in a logged-in Mac session. The first uses a uniquely named pasteboard and a separate offscreen rich-text process. The other two exercise native registration and menu dispatch with synthetic inputs. The conflict probe briefly reserves Control–Option–F18 and releases it on exit.
+
+```sh
+cargo test --locked --lib private_pasteboard_round_trips_rgba_and_cancel_preserves_previous_item -- --ignored --nocapture
+cargo run --locked --example shortcut-conflict-smoke
+cargo run --locked --example native-controls-smoke
+cargo run --locked --example native-handoff-smoke
+```
+
+To export only the synthetic thumbnail’s own AppKit view, pass `-- --export-panel /absolute/new-file.png` to the last example. A sleeping display can make real capture targeting unavailable while still allowing this panel-only check against a fixture-selected destination.
+
+Use a small synthetic test image with a recognisable border and two local TextEdit documents. Choose **Format → Make Rich Text** in the receiving document if it is currently plain text. Record the DMG checksum, Mac chip, macOS version, display scale, running-copy path and actual result of each check.
+
+| Check | Action and expected result |
+| --- | --- |
+| Install and permission | Download the candidate, drag it into Applications, eject the DMG and open Framecraft. Confirm the version in Screen Access. Grant Screen Recording if prompted, reopen if requested and explicitly retry. Record any Gatekeeper or privacy prompt separately. |
+| Record and relaunch | Record an available chord, choose **Copy and return**, finish setup, quit and reopen. The menu bar should show the same active combination. Try a standard editing key and an intentionally occupied chord. A failed replacement should preserve the previous working key. |
+| Copy at the caret | Type two words in the rich-text document. Leave the caret between them. From there invoke the shortcut, select the fixture and immediately press ⌘V. Check the region, dimensions, position and which app has keyboard focus. Record time from releasing the mouse to usable paste. |
+| Cancel and repeat | Start a second selection and press Escape. Type another character. Paste again to confirm the previous clipboard item survived. Take two differently marked grabs in succession and check that the most recent completed one pastes. |
+| Dirty editor and thumbnail | Leave an unsaved annotation open in Framecraft. Capture directly from TextEdit. Check the earlier edit survives and that **Edit Last Capture…** prompts before replacing it. Repeat with the thumbnail disabled, and with it visible before the next grab. |
+| Save and recover | Put a recognisable text string on the clipboard. Choose **Save and return**, capture, and check the file and the unchanged clipboard. Move the disposable output folder, capture again, then recover the image using Edit Last Capture or repair the folder and retry. |
+| Layout and upgrade | Repeat on another layout, on each available display and in a full-screen Space. Check keyboard-only and VoiceOver use. For an upgrade, record both versions, signing teams and whether Screen Recording required fresh consent. |
+
+Copy only synthetic material. Report failures or skipped rows with the actual configuration in [#35](https://github.com/jonathan-tipper/framecraft/issues/35), [#36](https://github.com/jonathan-tipper/framecraft/issues/36) or [#37](https://github.com/jonathan-tipper/framecraft/issues/37).
+
+## Everyday capture and text correction (beta 5 candidate)
+
+Use a disposable destination and synthetic image. Record app path, signing identity, OS version and whether each check was automated or observed natively.
+
+1. First launch shows 4-step setup. Visit each step at 900 × 620, use Back, then Not now. Confirm capture/import remains available and no preferences were saved. Reopen Capture setup from header, app menu and Command-comma.
+2. Configure a spare shortcut and a disposable folder, prefix and UTC date grouping. Finish, quit and reopen; confirm values persist. Try conflicting session/OS keys and an unwritable folder. Failure must retain the draft and prior working key. Malformed quick-capture settings must be reported before any explicit replacement.
+3. From another app, press the global shortcut. With permission denied, Framecraft must come forward and explain access. With access granted, select an area. Escape cancels. Check active-session, dirty-image and open-dialog guards.
+4. Open-editor mode writes no automatic file. Automatic mode saves original pixels under the configured UTC name and opens them for optional edits. Repeat within the same second; earlier PNGs remain byte-identical. Delete/move the disposable folder and retry; capture must remain open and unsaved with manual Save PNG recovery. Cancel before atomic publication creates no PNG; a completed save is retained.
+5. Open the synthetic sample. Choose Text, click the image and type without another click. Add a multiline label, select Edit text, change it and Cancel/Escape. Reopen and verify original wording. Apply a real change, Undo/Redo and save a PNG. Inspect exported pixels. New text should be white against its dark backing by default; custom colours remain explicit.
+6. Repeat on an imported PNG and a session frame. A dirty session-frame header at minimum width must retain Copy, Save, Save Edited Copy and Close access. Existing mark types, crop and redaction output must remain intact. Exported/reopened PNGs do not restore editable text objects.
+7. Check keyboard traversal, named controls and VoiceOver; record assistance needed and any unclear icons. Native appearance at Retina/non-Retina and supported macOS versions still needs separate runs.

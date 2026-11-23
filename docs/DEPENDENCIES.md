@@ -1,7 +1,8 @@
 # Declared dependency licences
 
-Generated from `cargo metadata --locked --offline --format-version 1` for Framecraft
-0.3.0-beta.1. This includes resolved packages for other platforms and optional
+Generated from `cargo metadata --locked --offline --format-version 1` for beta 1.
+All 417 dependency names and versions were checked against the beta 6 lockfile on
+22 November 2026. This includes resolved packages for other platforms and optional
 features; not every listed package is compiled into the macOS application.
 `Cargo.lock` records exact resolved versions. Declarations are upstream metadata,
 not a manual source audit or a complete binary attribution report.
@@ -11,7 +12,9 @@ font rasterisation and native desktop/handoff controls. Review the manifest and
 lockfile together when changing dependencies. Embedded-font licence notices are
 included in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) and should accompany
 redistributed bundles. Apple capture, AppKit and Vision are operating-system
-components, outside these crate licence declarations.
+components, outside these crate licence declarations. Beta 6 uses additional
+AppKit APIs from the existing objc2 bindings for a host-only pasteboard and
+non-activating thumbnail. Its one-off shortcut uses the system Carbon framework.
 
 | Crate | Version | Declared licence |
 | --- | --- | --- |

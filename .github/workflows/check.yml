@@ -10,13 +10,14 @@ permissions:
 
 jobs:
   macos:
-    runs-on: macos-14
+    runs-on: macos-15
     env:
       MACOSX_DEPLOYMENT_TARGET: "13.0"
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca
         with:
+          toolchain: stable
           components: rustfmt, clippy
       - name: Check formatting
         run: cargo fmt --all -- --check
@@ -24,15 +25,30 @@ jobs:
         run: cargo test --workspace --all-targets --locked
       - name: Test core without UI
         run: cargo test --workspace --no-default-features --locked
+      - name: Test Mac shortcut ownership and paste at a rich-text caret
+        run: |
+          cargo run --locked --example shortcut-conflict-smoke
+          cargo test --locked --lib private_pasteboard_round_trips_rgba_and_cancel_preserves_previous_item -- --ignored --nocapture
       - name: Clippy
-        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+        run: |
+          cargo clippy --workspace --all-targets --locked -- -D warnings
+          cargo clippy --workspace --all-targets --no-default-features --locked -- -D warnings
       - name: Build local application bundle
         run: bash scripts/bundle-macos.sh
+      - name: Test install, replacement, rollback and development DMG
+        run: |
+          bash scripts/test-install-macos.sh
+          bash scripts/package-macos.sh --skip-build
+          bash scripts/test-package-macos.sh dist/*-development.dmg
       - name: Archive app with macOS metadata
         run: ditto -c -k --sequesterRsrc --keepParent dist/Framecraft.app dist/Framecraft-macos.zip
-      - name: Upload development bundle
-        uses: actions/upload-artifact@v4
+      - name: Upload development bundle and installer
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: Framecraft-macos-development
-          path: dist/Framecraft-macos.zip
+          path: |
+            dist/Framecraft-macos.zip
+            dist/*-development.dmg
+            dist/*-development.dmg.sha256
+          if-no-files-found: error
 
