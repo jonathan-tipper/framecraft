@@ -1,93 +1,143 @@
-# Framecraft 0.3.0-beta.6
+# Framecraft
 
-Press your shortcut, select a rectangle, then paste at the cursor in the app you were using. You can also save to a chosen folder, annotate a screenshot, or collect a series of frames. Framecraft processes images and recognises text locally.
+**Capture a screenshot, explain the detail and share it from your Mac.**
 
-## Install on your Mac
+Framecraft brings everyday screen capture and multi-image review into one local-first Mac app. Grab an area and paste it into the app you're using. When an image needs context, add an arrow, a label or a redaction before sharing it. For a presentation or a longer walkthrough, collect a series of frames and turn the useful ones into an ordered, captioned pack.
 
-**Download beta 6 for Apple silicon.** Open the DMG, drag **Framecraft** into **Applications**, eject the disk image and open Framecraft from Applications. Its capture icon appears in your menu bar. [Download the DMG and checksum](https://github.com/jonathan-tipper/framecraft/releases/tag/v0.3.0-beta.6)
+It's built for the work around a screenshot: explaining a bug, documenting a process or passing on the relevant parts of a meeting. Capture, editing and text recognition run on your Mac. There's no account to create or Framecraft cloud service to upload to.
 
-Beta 6 uses an ad-hoc signature and has no Apple notarisation. If macOS blocks the first launch, approve Framecraft under **System Settings → Privacy & Security → Open Anyway**. Screen Recording access is a separate step. The guide covers both and the permission repair for upgrades. [Mac installation guide](docs/INSTALLATION.md) · [Test results](docs/TEST-NOTES.md)
+**[Download the Mac beta](https://github.com/jonathan-tipper/framecraft/releases/tag/v0.3.0-beta.6)** · [Get started](#get-started) · [Customer FAQ](#customer-faq)
 
-## Take your first screenshot
+Current release: **0.3.0-beta.6**, for Apple silicon. The beta is ad-hoc signed and isn't Apple-notarised; macOS may require first-launch approval. [Installation details](docs/INSTALLATION.md).
 
-1. Open **Capture setup**. Check Screen Recording access. In **Shortcut**, choose **Record shortcut** and press your preferred combination, or choose **Use menu bar only**. ⌘ means Command and ⇧ means Shift.
-2. Choose **Copy and return** on the last step and finish setup. Keep Framecraft running.
-3. In a rich-text TextEdit document, place the insertion point between two words. Press the configured shortcut and drag a small rectangle. **Escape** cancels.
-4. Press **⌘V**. The selected pixels should appear between the words. To annotate instead, choose **Edit Last Capture…** from Framecraft’s menu bar icon. For files, choose **Save and return** in setup and check the displayed folder and filename preview.
+![Framecraft's screenshot editor with labelled annotation tools, a text label and an arrow pointing to a detail in a sample image.](docs/images/screenshot-editor.jpg)
 
-**Capture Window…** selects a window. **Capture Screen** takes the primary display. **Open Image…** imports a PNG or JPEG. The same capture commands are in the Mac’s **Capture** application menu. The app requests the screen access macOS requires; it never grants itself permission.
+*The native Mac editor, showing generated sample content. Add context with the tool rail, adjust a selected mark in the inspector, then copy or save the result.*
 
-Shortcuts are optional. **Command (⌘)** and **Option (⌥)** are Mac modifier keys. While Framecraft is active, **Command + Option + 4** captures an area, **5** a window and **3** the primary display. Use **Capture setup** for an everyday shortcut that works from other apps while Framecraft is running. **More Capture → Session & app shortcuts…** contains the existing app commands and session bindings. You do not need to type key syntax.
+## How it works
 
-## Edit and leave a screenshot
+### For a quick screenshot
 
-The development editor uses a labelled tool rail and a contextual inspector. Choose **Highlight** for named colour presets and custom RGB, or **Pixelate** to draw an area and adjust **Block size**. The inspector distinguishes settings for the next mark from properties of a selected mark. Use **Redact** for an opaque cover; pixelation is not guaranteed concealment.
+Choose what should happen after capture in **Capture setup**. Use your recorded shortcut or the menu bar icon to capture an area. Window and primary-screen capture are also available from the menu.
 
-**Text** now works in placement order: choose Text, click the image, type, then **Add text**. Select a label and choose **Edit text…**, or double-click it, to revise it. **Apply changes** commits one undo step; Cancel/Escape preserves the original.
-
-Previous editor and save-then-edit preferences carry over. **Copy and return** uses a Mac-only pasteboard. **Save and return** writes a PNG and leaves the clipboard alone. A direct grab stays available in memory for **Edit Last Capture…**. **Retry Last Output** recovers a failed copy or save. **Clear Last Capture** releases the retained image. Reopened PNGs contain flattened text and marks. Persistent editable documents are tracked in [#33](https://github.com/jonathan-tipper/framecraft/issues/33).
-
-**Cancel tool** returns to Select and preserves completed marks. Use Undo after committing a mark. **Close screenshot** leaves Framecraft running; a fresh capture or unsaved edit offers Save, Discard changes and Cancel. Copying to the clipboard does not count as saving a file. Native checks and outstanding limits are recorded in [TEST-NOTES](docs/TEST-NOTES.md).
-
-## Collect several frames
-
-Open **Sessions → Start a new collection**. Choose the capture area, save folder and collection mode, then **Start collection**. Session-area selection uses a display snapshot: draw the crop, then confirm **Use this area**. Returning to Framecraft pauses collection. Stop the collection before using a separate one-off capture.
-
-| Mode | Behaviour |
-| --- | --- |
-| When I click | Use Capture now or Command + Option + S while running |
-| On a timer | 5–120-second interval, plus capture and processing time |
-| When content changes | Samples about once per second and saves sufficiently changed, settled pixels |
-
-Session shortcuts work from other apps only during an active collection. Defaults are Command + Option + S to capture, P to pause/resume and X to stop. **Collection options** contains timing, naming and stop limits. Default limits are 120 elapsed minutes, including pauses, or 500 images.
-
-The repeated capture region is fixed. **It does not follow a window.** Stop and reselect after moving content or changing displays. Equal-sized display swaps are not detected. The [synthetic change-mode benchmark](docs/evidence/change-mode.md) saved 22 of 30 intended frames in each of 3 runs; small or low-contrast changes can be missed.
-
-Reopen a saved session, choose an original or edited copy, add arrows/text/redaction, copy an image or export selected frames through **Review share pack…**. Packs contain offline HTML and flattened PNGs. Use **More Actions → Copy Text…** in the screenshot editor for local OCR with explicit review and copy.
-
-## Try the build
-
-To build from source, use a Mac with stable Rust and Apple’s command-line developer tools:
-
-```sh
-./scripts/bundle-macos.sh
-./scripts/install-macos.sh
-# For an existing install, quit Framecraft and use:
-./scripts/install-macos.sh --replace
-# Create a distributable local DMG:
-./scripts/package-macos.sh
+```mermaid
+flowchart TD
+    capture["Capture a screenshot"] --> result{"Your choice after capture"}
+    result --> copy["Copy and return<br/>Paste into your app"]
+    result --> save["Save and return<br/>PNG in your chosen folder"]
+    result --> edit["Open the editor<br/>Annotate, then copy or save"]
 ```
 
-No Rust tools are needed to use the downloadable app. See the [developer guide](docs/DEVELOPER-GUIDE.md) for source setup and the [release notes](docs/RELEASE-NOTES-0.3.md) for changes and limits.
+**Copy and return** puts the screenshot on this Mac's clipboard; press **⌘V** to paste at the cursor in an app that accepts images. **Save and return** writes a PNG and leaves your clipboard alone. You can still choose **Edit Last Capture…** from the menu bar to annotate your latest direct grab.
 
-## Data and output boundaries
+### For a set of screenshots
 
-Original PNGs remain in the chosen session folder. **Redacting an edited copy does not remove the unredacted original.** Share the selected edited output or reviewed pack, not the whole session folder. Exported PNGs contain flattened pixels, without original layers or copied source metadata.
+Open **Sessions → Start a new collection**. Choose a screen area, save folder and collection mode. Collect frames manually, on a timer or when the content changes, then return to review them together.
 
-Session metadata remembers capture identity, names and saved variants. It does not save editable annotation layers or OCR transcripts. Quitting or replacing an edited document requires an explicit save/export, discard or cancel decision. Saving a PNG does not make its annotations editable on reopening.
+```mermaid
+flowchart LR
+    area["Choose a fixed<br/>screen area"] --> collect["Collect frames"]
+    collect --> review["Review and<br/>annotate"]
+    review --> select["Select, order<br/>and caption"]
+    select --> pack["Export PNGs +<br/>offline HTML"]
+```
 
-Capture, editing and OCR make no application cloud calls. The capture adapter briefly writes a full-display image to a private temporary directory before cropping it. Prepared drag PNGs remain in temporary storage until the app exits. Cleanup is best effort, not secure erasure. Clipboard managers, cloud-synchronised destinations and receiving apps have their own retention behaviour.
+Choose an original or edited copy for each frame, select the ones you want, and use **Review share pack…** to check the output before exporting. The pack opens in a browser without Framecraft or an account.
 
-Images use RGBA8. Colour-managed wide-gamut/HDR output is not implemented; imported colour profiles are discarded without a colour transform. Text labels use bundled Hack glyphs; unsupported characters show `?`, without complex-script shaping. OCR quality and supported languages depend on installed Apple Vision.
+![Framecraft session review with 2 edited screenshots selected, captions for each frame, ordering controls and the Review share pack button.](docs/images/session-review.jpg)
 
-## Documentation and development
+*Session review with generated sample frames. Each image has an explicit choice of original or edited copy before sharing.*
 
-- [Installation](docs/INSTALLATION.md) and [Mac experience specification](docs/specs/0.3-mac-experience.md).
-- [User guide](docs/USER-GUIDE.md): controls, recovery, sharing and troubleshooting.
-- [Worked example](docs/WORKFLOW.md): a meeting capture through to an evidence pack.
-- [Developer guide](docs/DEVELOPER-GUIDE.md) and [architecture](docs/ARCHITECTURE.md).
-- [Testing](docs/TESTING.md), [recorded results](docs/TEST-NOTES.md), and [0.3 specification](docs/specs/0.3-session-workbench.md).
-- [Product direction](docs/PRODUCT.md), [dependency inventory](docs/DEPENDENCIES.md), and [third-party notices](docs/THIRD-PARTY-NOTICES.md).
-- [Editor design prototype](docs/prototypes/editor/README.md): proposed UI, clickable flows and story mapping for #22–#28. This is a design candidate, not a shipped app feature.
+## Get started
+
+You don't need Rust or developer tools to use the downloaded app.
+
+1. **Install.** [Download beta 6](https://github.com/jonathan-tipper/framecraft/releases/tag/v0.3.0-beta.6), open the DMG and drag **Framecraft** into **Applications**. Eject the disk image and open the installed app. If macOS blocks it, use **System Settings → Privacy & Security → Open Anyway** after the first launch attempt. The [installation guide](docs/INSTALLATION.md) covers checksums, updates and managed Macs.
+2. **Allow screen capture.** Open **Capture setup** and follow the screen-access step. macOS controls Screen Recording permission; Framecraft can't approve it for you. Quit and reopen the app if macOS asks.
+3. **Choose your controls.** Select **Record shortcut** and press your preferred key combination, or choose **Use menu bar only**. On the final step, choose **Copy and return** and finish setup. Keep Framecraft running.
+4. **Capture and paste.** Place the cursor in an app that accepts images. Press your shortcut, drag a rectangle, then press **⌘V** to paste. **Escape** cancels selection. Here, ⌘ means Command. If you chose menu bar only, use **Capture Area…** from Framecraft's menu bar icon.
+
+To try editing before granting screen access, choose **Try the editor with a sample image** on the opening screen, or use **Open Image…** with a PNG or JPEG. Neither captures your screen.
+
+If an upgrade leaves screen access blocked, open **More Capture → Screen Access…** and check which copy is running. The [permission recovery steps](docs/INSTALLATION.md#allow-capture) explain how to repair a stale macOS entry.
+
+## Customer FAQ
+
+### Who is Framecraft for?
+
+People who use screenshots to explain something: a developer reporting a bug, a product team reviewing a screen, a colleague writing instructions, or someone collecting key frames from a presentation. You can use it for a single image; sessions are there when the work needs a sequence.
+
+### What can I add to a screenshot?
+
+Arrows, text labels, numbered steps, rectangles, highlights, freehand drawing, pixelation and opaque redactions. Select a mark to adjust it, or use Undo and Redo while editing. You can crop the image and optionally add a background and framing. **More Actions → Copy Text…** recognises text locally with Apple Vision, lets you review it, then copies it only when you choose.
+
+### How do collection modes work?
+
+| Mode | What it does | Useful for |
+| --- | --- | --- |
+| **When I click** | Saves a frame when you use Capture now or your session shortcut | Deliberate evidence capture |
+| **On a timer** | Captures at a 5–120-second interval, plus processing time | Regular samples of a process |
+| **When content changes** | Samples about once per second and saves sufficiently changed, settled pixels | Mostly static presentations |
+
+Returning to Framecraft pauses collection. Stop it before taking a separate one-off screenshot. Default collection limits are 120 elapsed minutes, including pauses, or 500 images; **Collection options** lets you change them.
+
+The capture area is fixed: **it doesn't follow a moving window**. Stop and reselect after moving content or changing displays. Change detection compares pixels, so small changes, low contrast and animation can cause misses or duplicates. Review the collection before relying on it as a record.
+
+### What can I send to someone else?
+
+Copy a single image, save a PNG, or export a reviewed share pack. A pack is a folder containing only the selected flattened PNGs, your captions and an offline `index.html`. Keep those files together when sending it. Recipients can open the HTML in their browser or use the PNGs directly. Framecraft doesn't create hosted sharing links.
+
+### Do my screenshots leave my Mac?
+
+Framecraft doesn't send screenshots or recognised text to a cloud service. Capture, editing and OCR run locally. You choose the save destinations and when to copy or export. Cloud-synchronised folders, clipboard managers and receiving apps can retain or upload their own copies.
+
+**Copy and return** uses a Mac-only pasteboard, excluding that copy from Universal Clipboard. Copying explicitly from the editor uses the ordinary system clipboard. Capture briefly writes a full-display image to a private temporary folder before cropping; prepared drag files remain in temporary storage until exit. Cleanup is best effort and doesn't securely erase data. See the [storage details](docs/USER-GUIDE.md#troubleshooting-and-storage).
+
+### Does redaction remove the original?
+
+**No. Session originals stay in your chosen folder.** An opaque redaction covers pixels in the flattened output; it doesn't delete the source image. Share the selected edited copy or reviewed pack, rather than the whole session folder. Use **Redact** for information that must be covered. Pixelation isn't guaranteed concealment.
+
+### Can I come back and change an annotation later?
+
+You can revise marks and undo changes while the document is open. **Saved PNGs are flattened**: reopening one doesn't restore editable labels, shapes or undo history. Sessions retain original and saved edited images for review, but beta 6 has no persistent editable-project format. Copying an image doesn't save a file; save a PNG before closing if you want to keep it.
+
+### Which Macs can run the beta?
+
+The downloadable DMG is for **Apple silicon Macs**. The app targets **macOS 13 or later**; recorded native testing is on **macOS 26.6.2**. Older versions haven't been verified. Separate-Mac installation, Intel, multiple physical displays and VoiceOver checks remain open in the [test notes](docs/TEST-NOTES.md).
+
+### What else should I know before trying it?
+
+This beta has no scrolling capture, video or audio recording, or account sync. Colour-managed HDR and wide-gamut output aren't supported. Some characters in text labels display as `?`; OCR quality and language support depend on Apple Vision. The [user guide](docs/USER-GUIDE.md) and [release notes](docs/RELEASE-NOTES-0.3.md) cover the current limits.
+
+### Is Framecraft open source?
+
+Yes. The original application code is [MIT licensed](LICENSE), and the beta doesn't require an account or subscription. The app is built in Rust with egui/eframe. See the [dependency inventory](docs/DEPENDENCIES.md) and [third-party notices](docs/THIRD-PARTY-NOTICES.md) for bundled components.
+
+## Build from source
+
+On a Mac with stable Rust and Apple's command-line developer tools:
+
+```sh
+git clone https://github.com/jonathan-tipper/framecraft.git
+cd framecraft
+./scripts/bundle-macos.sh
+./scripts/install-macos.sh
+open /Applications/Framecraft.app
+```
+
+For an existing installation, quit Framecraft and use `./scripts/install-macos.sh --replace`. To run the sample editor directly from source:
 
 ```sh
 cargo run --locked --release -- --demo
-cargo run --locked --release -- --demo-export /tmp/framecraft-demo.png
-cargo run --locked --release -- --demo-session /tmp/framecraft-test-data
-cargo run --locked --release -- --demo-pack /tmp/framecraft-test-data
-cargo run --locked --release -- --render input.png output.png
 ```
 
-`--demo-session` creates 10 synthetic originals and 10 edited variants in a new dated folder; open the printed folder through **Open session folder…**. `--demo-pack` creates `Framecraft-sample-pack` with 10 PNGs and an offline index inside the supplied parent directory, refusing an existing pack folder. Neither command captures the screen.
+The [developer guide](docs/DEVELOPER-GUIDE.md) covers synthetic sessions, offline sample packs, packaging and development checks.
 
-The UI and compositor are Rust, using egui/eframe rather than a webview. Original application code is MIT licensed. Apple capture and Vision are operating-system components. No Cap code is reused; Framecraft's proposed distinction is session collection and review, not being the first capture app to use Rust.
+## Help and feedback
+
+- [Installation](docs/INSTALLATION.md) and [user guide](docs/USER-GUIDE.md): setup, controls, sharing and recovery.
+- [Worked example](docs/WORKFLOW.md): collect a project review and turn selected frames into an evidence pack.
+- [Product direction](docs/PRODUCT.md): scope, planned evaluation and current decisions.
+- [Architecture](docs/ARCHITECTURE.md), [testing guide](docs/TESTING.md) and [recorded results](docs/TEST-NOTES.md): implementation and evidence behind the beta.
+
+[Report a problem or suggest an improvement](https://github.com/jonathan-tipper/framecraft/issues). Include the version, macOS version and what you expected to happen. Use sample content where possible.
